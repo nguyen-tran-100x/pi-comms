@@ -1,0 +1,19 @@
+{
+  "name": "pi-comms-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Isolated Gate A/B feasibility evidence for pi-comms issue #2; not a loadable extension",
+  "scripts": {
+    "prepare:fixture": "node scripts/prepare-upstream.mjs",
+    "test": "node --import tsx --test --test-concurrency=1 test/*.test.ts",
+    "test:original": "cd .scratch/upstream && node --import tsx --test human-priority.pi.test.ts reply-tracker.test.ts"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-tui": "1.4.0",
+    "tsx": "4.20.6",
+    "typebox": "1.0.62"
+  }
+}

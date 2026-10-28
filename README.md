@@ -28,17 +28,23 @@ Do not change normal installations or publish this candidate without owner appro
 
 ## First run
 
-1. In each participating Pi session, run `/comms approve`.
-2. Select the exact colleague. Names are labels; the UI also shows the native session ID.
-3. Describe the collaboration and confirm. Declining/cancelling records no approval.
-4. Ask your agent to communicate. No human ID relay or per-message confirmation is required for that collaboration.
+Ask your agent to work with the colleague, for example:
 
-Each recipient follows its own user mandate. Unapproved traffic stays human-visible in `/comms inspect`, but cannot wake the model or grant approval. Agent inspection returns only IDs and a contact-approval hold; it withholds the incoming subject, body, references and return handle until approval. For standalone bidirectional work, approve the colleague on both sides. Peer messages cannot broaden approval or bypass host tool permissions. Same-account IPC and prompt attribution are not a security sandbox.
+> Have Reviewer review the current implementation and return supported findings. Do not edit.
+
+The agent discovers the exact colleague and attempts the send. **First contact opens a native human confirmation** showing the colleague, exact session, proposed work and request preview. Allow it and that same send continues—no setup command, ID relay or repeated task prompt.
+
+On the recipient's side, the request stays held for the person. A visible contact-request notice and waiting indicator appear; when the recipient is idle with no pending human input/draft and reception is not paused, a native confirmation asks whether to allow that collaboration. Allowing releases held messages at the next eligible human-first boundary and allows replies for the work. Neither peer traffic nor a tool call grants itself approval: only the person's confirmation writes it. The recipient still follows its own user mandate.
+
+Cancel/refuse an outbound prompt: nothing is sent. Cancel/refuse an incoming prompt: content remains held for the person, not the model. Further arrivals or automatic agent retries do not repeatedly reopen a rejected contact prompt. If you give the agent a new instruction to proceed, its next send can ask you again. Use `/comms requests` to reconsider an incoming request directly, or `/comms approve` to establish/change a contact explicitly. These commands are recovery/management options, not first-run prerequisites.
+
+Unapproved content remains fully human-visible in `/comms inspect`; model inspection returns only IDs and a contact-approval hold, withholding subject, body, references and return handle. Noninteractive callers without human approval UI fail with an actionable approval-required result; no consent is inferred. Native Stop or session replacement cancels pending approval without sending. Peer messages cannot broaden approval or bypass host tool permissions. Same-account IPC and prompt attribution are not a security sandbox.
 
 ## Everyday commands
 
 - `/comms` or `/comms status`: approval/context, waiting count, hold reason and reset limitations.
-- `/comms approve [exact-session-id]`: human selection/context/confirmation.
+- `/comms requests`: review/reconsider held incoming contact requests.
+- `/comms approve [exact-session-id]`: optional explicit contact setup/change through human selection/context/confirmation.
 - `/comms revoke [exact-session-id]`: remove contact approval after confirmation; queued traffic remains held.
 - `/comms pause`: keep buffering arrivals without peer admission/wakes.
 - `/comms resume`: resume eligible intake.
@@ -51,7 +57,7 @@ Native inline cards show counterpart, subject, batch and receipt; Ctrl+O expands
 ## Agent tools
 
 - `comms_peers({})`: known approved colleagues first, with context/reason. `view: "all"` discovers others without contacting them.
-- `comms_message({to, subject, text, refs?, corrects?})`: start an exact-session exchange.
+- `comms_message({to, subject, text, refs?, corrects?})`: start an exact-session exchange; first contact asks the person and continues this send if allowed. Do not ask the user to preconfigure contacts. Cancellation sends nothing; do not retry unless the user asks.
 - `comms_message({respondTo, text, refs?, corrects?})`: answer the explicit return handle after turns/tools; no blocking ask.
 - `comms_inspect({message})`, `({exchange,cursor?})`, `({queue:"self",cursor?})`, `({outbox:"self",cursor?})`: non-consuming runtime evidence. Not a polling duty.
 
@@ -67,7 +73,7 @@ Same-ID reconnect refresh is internal: after a definite stale-epoch rejection, r
 - **Saved:** a native session entry was actually observed locally.
 - **Response:** a linked peer message exists. None of these means work completed.
 
-No crash durability. Approvals, buffers, message/outbox records and return handles reset on reload, session switch or process restart. Resuming the same saved session preserves its native address, not lost runtime linkage/approval. Renew approval; report context lost/unknown instead of inventing recovery. The broker retains legacy best-effort mailbox behavior internally, but the public exact-send path rejects unavailable peers instead of promising offline delivery.
+No crash durability. Approvals, buffers, message/outbox records and return handles reset on reload, session switch or process restart. Resuming the same saved session preserves its native address, not lost runtime linkage/approval. The next contact attempt asks for approval again; report context lost/unknown instead of inventing recovery. The broker retains legacy best-effort mailbox behavior internally, but the public exact-send path rejects unavailable peers instead of promising offline delivery.
 
 ## Update and rollback
 

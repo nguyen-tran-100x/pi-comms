@@ -7,7 +7,7 @@ Date: 2026-10-28. Starting revision: `bbafcce4896f515204dd6da04a626c46f2bd358c`,
 - Versioned `pi-comms` 0.1.0 candidate with explicit Pi manifest, MIT licence/notices, compiled extension and standalone broker. No runtime npm dependencies; Pi/typebox/TUI remain host-provided peers.
 - Selected pinned MIT intercom broker/client/framing/health-and-spawn-lock reuse in a separate `comms` runtime namespace. No bridge to intercom, Herdr discovery, pane launch or model execution.
 - Public native-session UUID addressing. The production client exposes exact sends only. Shared same-ID helper re-resolves once after definite epoch rejection and rechecks retained approval; no unknown-outcome retry. Concurrent active claims, including same-process claims, are rejected.
-- `/comms approve`: native selector, collaboration input and human confirmation. Approval is not an agent tool/envelope field. Revoke, first-run/reset notices, waiting status, Pause/Resume and inspection.
+- First-send native human confirmation with automatic continuation of that send. Incoming contact requests surface to the person at an eligible idle boundary; only confirmed requests enter the model. `/comms requests` reopens held decisions, `/comms approve` remains optional manual management. No preapproval ritual or ID relay. Approval is not an agent-controlled envelope field. Revoke, first-run/reset notices, waiting status, Pause/Resume and inspection.
 - Unapproved arrivals stay human-visible but cannot enter model context or wake it. Approval is separate on each standalone participant; inbound content cannot create it.
 - One schema-derived send/reply input, explicit return handles, multiple exchanges/responses, correction linkage, refs, volatile queue/outbox/message inspection and paginated full-item evidence. Invalid/oversize input rejects, not truncates.
 - Human-first FIFO batch snapshots at eligible busy/idle boundaries; native pending human input and checked draft take precedence. Later arrivals remain for a later snapshot. Pause holds admission/wakes; Stop only stops the current run.
@@ -19,10 +19,10 @@ Date: 2026-10-28. Starting revision: `bbafcce4896f515204dd6da04a626c46f2bd358c`,
 Environment: macOS arm64, Node 22.23.3, Pi 1.4.0.
 
 - `npm run check`: production source TypeScript check passes.
-- `npm run test:base`: 10/10 pass. Includes actual compiled extension loaded by native resource loader; isolated broker and two real Pi sessions with a scripted local faux provider.
-- `npm test`: 37/37 pass: 10 Base tests plus 27 historical/prototype spike tests. These are not 37 tests of the production implementation.
+- `npm run test:base`: 14/14 pass. Includes actual compiled extension loaded by native resource loader; isolated broker and two real Pi sessions with a scripted local faux provider.
+- `npm test`: 41/41 pass: 14 Base tests plus 27 historical/prototype spike tests. These are not 41 tests of the production implementation.
 - `npm run test:original`: 32/32 pinned upstream regression tests pass.
-- `npm run test:artifact`: builds/packs, installs tarball into a temporary prefix with peers omitted, loads via real Pi resource loader, then reruns the native Base journey against the installed artifact. No normal environment installation.
+- `npm run test:artifact`: builds/packs, installs tarball into a temporary prefix with peers omitted, loads via real Pi resource loader, then reruns 6 native Base integration scenarios against the installed artifact. No normal environment installation.
 - `git diff --check`: passes.
 - Clean temporary checkout: `npm ci --ignore-scripts && npm run verify` passes without pre-existing node_modules, dist or upstream fixture.
 
@@ -35,6 +35,22 @@ Separate real-wire production test deliberately replaces a resolved recipient co
 A bounded independent read-only review identified the omitted startup lock and receive-only reconnect gap; both were repaired and regression-tested. Simultaneous first connects now share one broker; native sessions automatically rejoin after broker termination using bounded reconnect backoff. Active duplicate claims remain rejected; a destroyed old socket can be reclaimed. Replies whose original request record was lost retain full content with explicit `context-lost` linkage rather than being dropped. Native settlement releases wake reservations. These are local fixes verified by tests, not a second independent review claim.
 
 No model API calls were made for Base verification. Earlier paid Gate C evidence is historical, not repeated.
+
+## First-contact UX repair after real-use feedback
+
+The owner attempted real work and hit `CONTACT_NOT_APPROVED`. The previous first-run instructions required separate manual contact setup in both sessions; the collapsed error also omitted its recovery action. This was observed onboarding friction, not user error or evidence of a reset. Earlier guided/scripted tests did not establish an acceptable real-use experience.
+
+The first actual send now collects human confirmation in place and continues without reissuing the task. It validates the exact recipient and input first. Incoming requests produce a visible human notice/indicator and one native confirmation when idle/no pending human input or draft/not paused. Peer content remains outside the model until that person approves; confirmation covers bounded collaboration and replies, not tool or mission authority. Cancellation/refusal sends nothing or leaves incoming content held; repeated peer arrivals/tool attempts do not loop approval dialogs. `/comms requests` supports explicit reconsideration. Noninteractive callers get approval-required recovery; Stop and session invalidation abort open dialogs. Error cards include nextAction.
+
+The focused independent review of this repair found two additional issues before live use: unchanged waiting widgets were being rebuilt every timer tick, and a cancelled contact could not be reconsidered through a new ordinary human instruction. Widget/status updates now run only on changes. Only a new native human input (not extension/model/peer continuation) clears the declined-outbound suppression, allowing the next send to ask again. Incoming approval context explicitly labels the peer-supplied title instead of presenting it as a user-written mission. These findings were checked against source and covered by regressions; no repeat review round was run.
+
+Four new native integration scenarios (also rerun from the installed artifact) cover:
+- The normal model/tool review with **no preapproval commands**: empty known discovery → broader discovery → send waits for sender decision → recipient decision → two actual read turns → linked reply. Assertions check no outbound record or recipient model request before confirmation, one decision per participant, no reply setup, and exact linkage.
+- Cancellation/refusal and automatic retries, new-human-instruction reconsideration without a management command, unchanged-widget stability, held incoming content and explicit reconsideration, noninteractive refusal, signal cancellation and actual native Stop while the approval tool is waiting.
+- Cancelling an outgoing send does not silently refuse a later independent incoming contact decision; that request still gets its own human prompt without admitting content.
+- Editor-draft and Pause precedence for incoming contact decisions; session replacement cancels an old dialog even if its late result says Allow.
+
+These are deterministic execution/interaction tests, not a claim that an unfamiliar model or the owner has accepted the revised UX. No paid trials repeated. Real-use acceptance is still pending.
 
 ## Review corrections after d1491d1
 
@@ -74,7 +90,7 @@ This is a surface comparison, not an invented reduction percentage:
 
 Use two existing isolated Pi sessions sharing a dedicated test agent directory; load the reviewed tarball, not normal installs. The person should:
 
-1. Understand the first-run notice and select/approve the exact colleague for a named collaboration; cancel once and verify no approval.
+1. Give the agent a real collaboration task without setup commands. Check whether the first-send and incoming confirmation make the colleague, work, consequences and cancellation clear.
 2. Ask one agent to request a read-only review. Let the colleague use tools and return through the provided handle. Check sender/recipient, subject and expanded full content/details.
 3. Queue two handbacks during work, type a draft/steering message and check the stated human-first behavior.
 4. Stop a run and observe that later peer traffic can wake; Pause reception, send another message, verify it waits, then Resume.

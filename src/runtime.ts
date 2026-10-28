@@ -24,14 +24,19 @@ export class Runtime {
     const entry = this.records.get(id);
     if (entry && !entry.facts.some(f => f.kind === kind && f.evidenceRef === evidenceRef)) entry.facts.push({ kind, at: new Date().toISOString(), source, ...(evidenceRef ? { evidenceRef } : {}) });
   }
-  async send(input: MessageInput) {
+  contactFor(input: MessageInput) {
     validate(MessageInput, input);
+    checkSize(input);
     const source = 'respondTo' in input ? this.returns.get(input.respondTo) : undefined;
     if ('respondTo' in input && !source) throw new Error('CONTEXT_LOST');
     const to = source?.from ?? ('to' in input ? input.to : '');
-    if (!this.isApproved(to)) throw new Error('CONTACT_NOT_APPROVED');
     const correction = input.corrects ? this.records.get(input.corrects)?.message : undefined;
     if (input.corrects && (!correction || correction.from !== this.self || correction.to !== to)) throw new Error('INVALID_INPUT: correction must reference your message to this exact peer');
+    return { to, source };
+  }
+  async send(input: MessageInput) {
+    const { to, source } = this.contactFor(input);
+    if (!this.isApproved(to)) throw new Error('CONTACT_NOT_APPROVED');
     const envelope: Envelope = { id: randomUUID(), exchange: source?.exchange ?? randomUUID(), subject: source?.subject ?? ('subject' in input ? input.subject : ''), text: input.text, refs: input.refs ?? [], replyTo: source?.id ?? null, corrects: input.corrects ?? null, createdAt: new Date().toISOString() };
     checkSize(envelope);
     const entry: Entry = { message: { ...envelope, from: this.self, to }, facts: [], state: 'unknown' };

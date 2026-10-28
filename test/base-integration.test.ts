@@ -17,12 +17,13 @@ const waitFor = async (predicate: () => boolean) => {
   while (!predicate()) { if (Date.now() > deadline) throw new Error('Native fixture timed out'); await new Promise(r => setTimeout(r, 10)); }
 };
 const text = (messages: any[]) => messages.map(m => typeof m.content === 'string' ? m.content : m.content?.map((b: any) => b.text ?? '').join('')).join('\n');
-async function participant(label: string) {
+async function participant(label: string, interactive = true) {
   const dir = join(root, label); mkdirSync(dir);
   const faux = fauxProvider({ provider: `comms-base-${label}` });
   const models = await ModelRuntime.create({ authPath: join(root, `${label}-auth.json`), modelsPath: null, refreshOnCreate: false }); models.registerNativeProvider(faux.provider);
-  const observed: any[][] = []; const notifications: string[] = []; const inspectedByHuman: string[] = []; const events: any[] = [];
-  let draft = ''; let confirm = true; let hold = false; const releases: (() => void)[] = [];
+  const observed: any[][] = []; const notifications: string[] = []; const inspectedByHuman: string[] = []; const events: any[] = []; const widgetUpdates: unknown[] = [];
+  const dialogs: { title: string; message: string }[] = [];
+  let draft = ''; let confirm: boolean | ((opts?: { signal?: AbortSignal }) => Promise<boolean>) = false; let hold = false; const releases: (() => void)[] = [];
   faux.setResponses(Array.from({ length: 100 }, () => async context => {
     observed.push(structuredClone(context.messages));
     if (hold) await new Promise<void>(resolve => releases.push(resolve));
@@ -35,19 +36,19 @@ async function participant(label: string) {
     return { ...created, services, diagnostics: [] };
   };
   const runtime = await createAgentSessionRuntime(factory, { cwd: dir, agentDir: root, sessionManager: manager });
-  const bind = async (session: any) => session.bindExtensions({ mode: 'tui', uiContext: { ...session.extensionRunner.getUIContext(), getEditorText: () => draft, notify: (message: string) => notifications.push(message), confirm: async () => confirm, input: async () => 'Base integration review', select: async (_title: string, choices: string[]) => choices[0], editor: async (_title: string, value: string) => { inspectedByHuman.push(value); return undefined; } } });
+  const bind = async (session: any) => session.bindExtensions(interactive ? { mode: 'tui', uiContext: { ...session.extensionRunner.getUIContext(), getEditorText: () => draft, notify: (message: string) => notifications.push(message), setWidget: (_key: string, content: unknown) => { widgetUpdates.push(content); }, confirm: async (title: string, message: string, opts?: { signal?: AbortSignal }) => { dialogs.push({ title, message }); return typeof confirm === 'function' ? confirm(opts) : confirm; }, input: async () => 'Base integration review', select: async (_title: string, choices: string[]) => choices[0], editor: async (_title: string, value: string) => { inspectedByHuman.push(value); return undefined; } } } : { mode: 'print' });
   await bind(runtime.session); runtime.setRebindSession(bind);
   runtime.session.subscribe(event => events.push(event));
-  const tool = async (name: string, input: unknown) => {
+  const tool = async (name: string, input: unknown, signal?: AbortSignal) => {
     const session = runtime.session; const runner = session.extensionRunner!;
     const definition = runner.getToolDefinition(name)!;
-    return definition.execute(randomUUID(), input, undefined, undefined, runner.createToolContext(randomUUID(), undefined));
+    return definition.execute(randomUUID(), input, signal, undefined, runner.createToolContext(randomUUID(), signal));
   };
-  return { runtime, observed, notifications, inspectedByHuman, events, tool, manager, dir,
+  return { runtime, observed, notifications, inspectedByHuman, dialogs, events, widgetUpdates, tool, manager, dir,
     responses: (responses: any[]) => faux.setResponses(responses.map(response => async (context: any) => { observed.push(structuredClone(context.messages)); return typeof response === 'function' ? response(context) : response; })),
     id: () => runtime.session.sessionId,
     command: (args: string) => runtime.session.prompt(`/comms ${args}`),
-    draft: (value: string) => { draft = value; }, confirm: (value: boolean) => { confirm = value; }, hold: (value: boolean) => { hold = value; },
+    draft: (value: string) => { draft = value; }, confirm: (value: typeof confirm) => { confirm = value; }, hold: (value: boolean) => { hold = value; },
     release: () => { releases.shift()?.(); },
     close: async () => { hold = false; releases.splice(0).forEach(r => r()); await runtime.session.abort(); await runtime.dispose(); },
   };
@@ -61,14 +62,163 @@ const lastResult = (context: any, name: string) => {
   return JSON.parse(text([result]));
 };
 
+test('first-contact approval continues the actual model/tool review without preapproval commands', async () => {
+  let a: Awaited<ReturnType<typeof participant>> | undefined, b: Awaited<ReturnType<typeof participant>> | undefined;
+  try {
+    a = await participant('natural-coordinator'); b = await participant('natural-reviewer');
+    let allowSend: ((allowed: boolean) => void) | undefined;
+    a.confirm(opts => new Promise(resolve => { allowSend = resolve; opts?.signal?.addEventListener('abort', () => resolve(false), { once: true }); }));
+    b.confirm(true);
+    writeFileSync(join(b.dir, 'evidence.txt'), 'Natural review: first source.');
+    writeFileSync(join(b.dir, 'detail.txt'), 'Natural review: second source.');
+    b.responses([
+      () => call('read', { path: 'evidence.txt' }),
+      context => { assert.match(text(context.messages), /first source/); return call('read', { path: 'detail.txt' }); },
+      context => {
+        assert.match(text(context.messages), /second source/);
+        const handle = text(context.messages).match(/return handle ([0-9a-f-]{36})/)![1];
+        return call('comms_message', { respondTo: handle, text: 'NATURAL_REVIEW_FINDINGS' });
+      },
+      fauxAssistantMessage('Review returned.'),
+    ]);
+    a.responses([
+      call('comms_peers', {}),
+      context => { assert.deepEqual(lastResult(context, 'comms_peers').data.items, []); assert.match(lastResult(context, 'comms_peers').data.nextAction, /all/); return call('comms_peers', { view: 'all' }); },
+      context => call('comms_message', { to: lastResult(context, 'comms_peers').data.items[0].id, subject: 'Read-only code review', text: 'Read evidence.txt and detail.txt, then return findings.' }),
+      context => { assert.equal(lastResult(context, 'comms_message').ok, true); return fauxAssistantMessage('Request sent after user approval.'); },
+      context => { assert.match(text(context.messages), /NATURAL_REVIEW_FINDINGS/); return fauxAssistantMessage('Findings assessed.'); },
+    ]);
+    const work = a.runtime.session.prompt('Have the reviewer review this work and return findings.');
+    await waitFor(() => !!allowSend);
+    assert.equal(b.observed.length, 0, 'nothing reaches recipient before sender human approval');
+    assert.equal(data(await a.tool('comms_inspect', { outbox: 'self' })).data.items.length, 0);
+    assert.match(a.dialogs[0].message, /Read-only code review/);
+    assert.match(a.dialogs[0].message, /Yes continues this send automatically/);
+    allowSend!(true); await work;
+    await waitFor(() => a!.observed.some(m => text(m).includes('NATURAL_REVIEW_FINDINGS')) && a!.runtime.session.isIdle && b!.runtime.session.isIdle);
+    assert.equal(a.dialogs.length, 1); assert.equal(b.dialogs.length, 1);
+    assert.match(b.dialogs[0].title, /requesting collaboration/);
+    assert.match(b.dialogs[0].message, /not yet shared with the agent/);
+    assert.deepEqual(b.events.filter(e => e.type === 'tool_execution_end').map(e => e.toolName), ['read', 'read', 'comms_message']);
+    const sent = data(await a.tool('comms_inspect', { outbox: 'self' })).data.items[0];
+    assert.equal(sent.responses.length, 1);
+    const response = data(await a.tool('comms_inspect', { message: sent.responses[0] })).data;
+    assert.equal(response.message.replyTo, sent.message.id);
+    assert.equal(response.message.exchange, sent.message.exchange);
+  } finally { await b?.close(); await a?.close(); }
+});
+
+test('contact cancellation, no UI, incoming hold/reconsideration and Stop never self-approve or loop', async () => {
+  let a: Awaited<ReturnType<typeof participant>> | undefined, b: Awaited<ReturnType<typeof participant>> | undefined, headless: Awaited<ReturnType<typeof participant>> | undefined;
+  try {
+    a = await participant('approval-sender'); b = await participant('approval-receiver');
+    const input = { to: b.id(), subject: 'Read-only review', text: 'HELD_APPROVAL_CONTENT' };
+    // Cancelling/refusing does not send, and agent retries do not re-prompt the person.
+    for (let i = 0; i < 2; i++) assert.equal(data(await a.tool('comms_message', input)).error.code, 'CONTACT_NOT_APPROVED');
+    assert.equal(a.dialogs.length, 1); assert.equal(b.observed.length, 0);
+    assert.equal(data(await a.tool('comms_inspect', { outbox: 'self' })).data.items.length, 0);
+    assert.equal(data(await a.tool('comms_peers', {})).data.items.length, 0);
+    // Extension/model continuation is not a new human instruction and cannot re-prompt.
+    a.responses([call('comms_message', input), fauxAssistantMessage('Still not approved.')]);
+    await a.runtime.session.sendUserMessage('Try again');
+    await a.runtime.session.waitForIdle(); assert.equal(a.dialogs.length, 1);
+    // A real new user instruction can reconsider without a management command.
+    a.confirm(true);
+    a.responses([call('comms_message', input), fauxAssistantMessage('Sent after user approval.')]);
+    await a.runtime.session.prompt('Go ahead with the review; I will allow the contact.');
+    assert.equal(a.dialogs.length, 2);
+    const sent = data(await a.tool('comms_inspect', { outbox: 'self' })).data.items[0];
+    await waitFor(() => b!.dialogs.length === 1);
+    await new Promise(r => setTimeout(r, 200));
+    assert.equal(b.observed.length, 0);
+    assert.doesNotMatch(JSON.stringify(data(await b.tool('comms_inspect', { queue: 'self' }))), /HELD_APPROVAL_CONTENT/);
+    await a.tool('comms_message', { ...input, text: 'SECOND_HELD_CONTENT' });
+    await new Promise(r => setTimeout(r, 200)); assert.equal(b.dialogs.length, 1, 'later arrivals do not repeat declined dialogs');
+    b.confirm(true); await b.command('requests');
+    await waitFor(() => b!.observed.some(m => text(m).includes('HELD_APPROVAL_CONTENT')) && b!.runtime.session.isIdle);
+    assert.match(text(b.observed[0]), /SECOND_HELD_CONTENT/);
+    assert.match(data(await b.tool('comms_peers', {})).data.items[0].context, /peer-supplied title; user directives remain controlling/);
+    const widgetCount = b.widgetUpdates.length;
+    await new Promise(r => setTimeout(r, 340)); assert.equal(b.widgetUpdates.length, widgetCount, 'unchanged state does not rebuild native widgets every timer tick');
+    // Native tool context without a human UI rejects, never guesses consent.
+    headless = await participant('approval-headless', false);
+    const refused = data(await headless.tool('comms_message', { ...input, to: a.id() }));
+    assert.equal(refused.error.code, 'CONTACT_APPROVAL_REQUIRED');
+    assert.equal(data(await headless.tool('comms_inspect', { outbox: 'self' })).data.items.length, 0);
+    // Stop while the native approval dialog is open cancels it and prevents send/approval.
+    const controller = new AbortController(); let deciding = false;
+    a.confirm(opts => new Promise(resolve => { deciding = true; opts?.signal?.addEventListener('abort', () => resolve(false), { once: true }); }));
+    const stopped = a.tool('comms_message', { ...input, to: headless.id() }, controller.signal);
+    await waitFor(() => deciding); controller.abort();
+    assert.equal(data(await stopped).error.code, 'CONTACT_CANCELLED');
+    assert.ok(!data(await a.tool('comms_peers', {})).data.items.some((p: any) => p.id === headless!.id()));
+    // Native Stop also aborts the tool's own signal and dismisses its approval dialog.
+    deciding = false;
+    a.responses([call('comms_message', { ...input, to: headless.id() }), fauxAssistantMessage('stopped')]);
+    const run = a.runtime.session.prompt('Ask the new colleague for this review.');
+    await waitFor(() => deciding); await a.runtime.session.abort(); await run;
+    assert.ok(!data(await a.tool('comms_peers', {})).data.items.some((p: any) => p.id === headless!.id()));
+    assert.ok(!data(await a.tool('comms_inspect', { outbox: 'self' })).data.items.some((e: any) => e.message.to === headless!.id()));
+    assert.equal(data(await a.tool('comms_inspect', { message: sent.message.id })).ok, true);
+  } finally { await headless?.close(); await b?.close(); await a?.close(); }
+});
+
+test('cancelling an outgoing send does not silently answer a later incoming contact decision', async () => {
+  let a: Awaited<ReturnType<typeof participant>> | undefined, b: Awaited<ReturnType<typeof participant>> | undefined;
+  try {
+    a = await participant('direction-a'); b = await participant('direction-b');
+    const denied = data(await a.tool('comms_message', { to: b.id(), subject: 'Outbound', text: 'cancel this send' }));
+    assert.equal(denied.error.code, 'CONTACT_NOT_APPROVED'); assert.equal(a.dialogs.length, 1);
+    b.confirm(true);
+    assert.equal(data(await b.tool('comms_message', { to: a.id(), subject: 'Incoming', text: 'a different incoming request' })).ok, true);
+    await waitFor(() => a!.dialogs.length === 2);
+    assert.match(a.dialogs[1].title, /requesting collaboration/);
+    assert.equal(a.observed.length, 0, 'new incoming prompt did not imply consent or admit content');
+    assert.doesNotMatch(JSON.stringify(data(await a.tool('comms_inspect', { queue: 'self' }))), /a different incoming request/);
+  } finally { await b?.close(); await a?.close(); }
+});
+
+test('incoming contact prompt respects drafts/Pause and lifetime replacement cannot grant approval', async () => {
+  let a: Awaited<ReturnType<typeof participant>> | undefined, b: Awaited<ReturnType<typeof participant>> | undefined;
+  try {
+    a = await participant('boundary-sender'); b = await participant('boundary-receiver');
+    assert.equal(data(await a.tool('comms_message', { to: 'Reviewer', subject: 'invalid', text: 'not an exact address' })).error.code, 'INVALID_INPUT');
+    assert.equal(a.dialogs.length, 0, 'invalid input never asks the person to approve');
+    let allow: ((value: boolean) => void) | undefined;
+    a.confirm(() => new Promise(resolve => { allow = resolve; })); b.confirm(true); b.draft('human draft');
+    const sends = Promise.all([
+      a.tool('comms_message', { to: b.id(), subject: 'Review boundary', text: 'draft-held request' }),
+      a.tool('comms_message', { to: b.id(), subject: 'Review boundary', text: 'second concurrent request' }),
+    ]);
+    await waitFor(() => !!allow); assert.equal(a.dialogs.length, 1, 'parallel sends share one human decision');
+    allow!(true); const results = await sends; assert.ok(results.every(result => data(result).ok));
+    await new Promise(r => setTimeout(r, 220)); assert.equal(b.dialogs.length, 0);
+    assert.equal(b.observed.length, 0);
+    await b.command('pause'); b.draft('');
+    await new Promise(r => setTimeout(r, 220)); assert.equal(b.dialogs.length, 0);
+    await b.command('resume');
+    await waitFor(() => b!.dialogs.length === 1 && b!.observed.length === 1 && b!.runtime.session.isIdle);
+    // An approval dialog from the invalidated session cannot approve the replacement.
+    await b.runtime.newSession();
+    let deciding = false;
+    a.confirm(opts => new Promise(resolve => { deciding = true; opts?.signal?.addEventListener('abort', () => resolve(true), { once: true }); }));
+    const pending = a.tool('comms_message', { to: b.id(), subject: 'New saved session', text: 'must not survive switch' });
+    await waitFor(() => deciding);
+    await a.runtime.newSession();
+    assert.equal(data(await pending).error.code, 'CONTACT_CANCELLED');
+    assert.deepEqual(data(await a.tool('comms_peers', {})).data.items, []);
+    assert.deepEqual(data(await a.tool('comms_inspect', { outbox: 'self' })).data.items, []);
+  } finally { await b?.close(); await a?.close(); }
+});
+
 test('installed Base model tools: private inspection boundary and discover → send → two reads → contextual reply', async () => {
   let a: Awaited<ReturnType<typeof participant>> | undefined, b: Awaited<ReturnType<typeof participant>> | undefined;
   try {
     a = await participant('tool-coordinator'); b = await participant('tool-reviewer');
     // Select through the normal human selector, rather than supplying an ID.
-    await a.command('approve');
+    a.confirm(true); await a.command('approve');
     const privateMessage = data(await a.tool('comms_message', { to: b.id(), subject: 'PRIVATE_SUBJECT', text: 'PRIVATE_BODY', refs: [{ uri: 'file:///PRIVATE_REFERENCE', label: 'PRIVATE_LABEL' }] })).data;
-    await waitFor(() => b!.notifications.some(n => /Unapproved peer/.test(n)));
+    await waitFor(() => b!.notifications.some(n => /Contact request from/.test(n)));
     assert.equal(b.observed.length, 0);
     await b.command(`inspect ${privateMessage.message.id}`);
     assert.match(b.inspectedByHuman.at(-1)!, /PRIVATE_BODY/);
@@ -83,7 +233,7 @@ test('installed Base model tools: private inspection boundary and discover → s
     }
     assert.match(text(b.observed.at(-1)!), /CONTACT_NOT_APPROVED/);
     // Approve while paused: metadata-only inspection changes to complete evidence, without automatic intake.
-    await b.command('pause'); await b.command('approve');
+    await b.command('pause'); b.confirm(true); await b.command('approve');
     assert.match(JSON.stringify(data(await b.tool('comms_inspect', { message: privateMessage.message.id }))), /PRIVATE_BODY/);
     b.responses([fauxAssistantMessage('No reply required for the earlier message.')]);
     await b.command('resume'); await waitFor(() => b!.runtime.session.isIdle && b!.observed.some(m => text(m).includes('PRIVATE_BODY')));
@@ -175,9 +325,9 @@ test('packaged extension: first-run approval, exact wire, delayed replies, Stop/
     await b.command('pause');
     const sent = data(await a.tool('comms_message', { to: bid, subject: 'Design review', text: 'Inspect without editing; reply after tools.' }));
     assert.equal(sent.ok, true);
-    await waitFor(() => b!.notifications.some(n => /Unapproved peer/.test(n)));
+    await waitFor(() => b!.notifications.some(n => /Contact request from/.test(n)));
     assert.equal(b.observed.length, 0, 'unsolicited traffic did not wake model');
-    await b.command(`approve ${aid}`);
+    b.confirm(true); await b.command(`approve ${aid}`);
     await new Promise(r => setTimeout(r, 200)); assert.equal(b.observed.length, 0, 'Pause held after approval');
     await b.command('resume'); await waitFor(() => b!.observed.length === 1 && b!.runtime.session.isIdle);
     assert.match(text(b.observed[0]), /subordinate to user directives/);
@@ -245,7 +395,7 @@ test('packaged extension: first-run approval, exact wire, delayed replies, Stop/
     await b.runtime.switchSession(originalPath); assert.equal(b.id(), bid);
     assert.equal(data(await b.tool('comms_peers', {})).data.items.length, 0);
     assert.equal(data(await b.tool('comms_message', { respondTo: handle, text: 'lost linkage' })).error.code, 'CONTEXT_LOST');
-    await b.command(`approve ${aid}`);
+    b.confirm(true); await b.command(`approve ${aid}`);
     const refreshed = data(await a.tool('comms_message', { to: bid, subject: 'Same saved session', text: 'fresh live connection, same public address' }));
     assert.equal(refreshed.ok, true);
     await waitFor(() => b!.runtime.session.isIdle && b!.observed.some(m => text(m).includes('fresh live connection')));

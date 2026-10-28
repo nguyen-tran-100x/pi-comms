@@ -32,7 +32,7 @@ Ask your agent to work with the colleague, for example:
 
 > Have Reviewer review the current implementation and return supported findings. Do not edit.
 
-The agent discovers the exact colleague and attempts the send. **First contact opens a native human confirmation** showing the colleague, exact session, proposed work and request preview. Allow it and that same send continues—no setup command, ID relay or repeated task prompt.
+The agent discovers the exact colleague and attempts the send. **First contact opens a native human confirmation** with colleague, work and Yes/No consequences first. Request preview, exact session and approval lifetime follow. Allow it and that same send continues—no setup command, ID relay or repeated task prompt.
 
 On the recipient's side, the request stays held for the person. A visible contact-request notice and waiting indicator appear; when the recipient is idle with no pending human input/draft and reception is not paused, a native confirmation asks whether to allow that collaboration. Allowing releases held messages at the next eligible human-first boundary and allows replies for the work. Neither peer traffic nor a tool call grants itself approval: only the person's confirmation writes it. The recipient still follows its own user mandate.
 
@@ -48,7 +48,7 @@ Unapproved content remains fully human-visible in `/comms inspect`; model inspec
 - `/comms revoke [exact-session-id]`: remove contact approval after confirmation; queued traffic remains held.
 - `/comms pause`: keep buffering arrivals without peer admission/wakes.
 - `/comms resume`: resume eligible intake.
-- `/comms inspect [message-id]`: inspect waiting content or a specific message without consuming/admitting it.
+- `/comms inspect [message-id]`: read waiting messages or a specific message without consuming/admitting it. The read-only view shows counterpart, subject, full content, references and observed state—not editable JSON. Use arrows/PageUp/PageDown to scroll, **d** for technical evidence, **n/p** for more/previous messages, and **Esc/q** to close. It is a snapshot, not a second inbox. RPC clients use equivalent read-only selections; model/script inspection remains structured.
 
 **Stop ends the current run. A queued or later peer message can wake it again. Pause holds incoming peer admission/wakes until Resume.** Pause does not stop existing work or retract admitted content. Stop/corrections do not roll back effects already performed.
 

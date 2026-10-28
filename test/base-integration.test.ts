@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fauxProvider, fauxAssistantMessage } from '@earendil-works/pi-ai';
+import { KeybindingsManager, TUI_KEYBINDINGS } from '@earendil-works/pi-tui';
 import { createAgentSessionRuntime, createAgentSessionServices, createAgentSessionFromServices, createReadTool, ModelRuntime, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { fileURLToPath } from 'node:url';
 const extensionPath = process.env.PI_COMMS_TEST_EXTENSION ?? fileURLToPath(new URL('../dist/extension.js', import.meta.url));
@@ -40,7 +41,15 @@ async function participant(label: string, interactive = true) {
     return { ...created, services, diagnostics: [] };
   };
   const runtime = await createAgentSessionRuntime(factory, { cwd: dir, agentDir: root, sessionManager: manager });
-  const bind = async (session: any) => session.bindExtensions(interactive ? { mode: 'tui', uiContext: { ...session.extensionRunner.getUIContext(), getEditorText: () => draft, notify: (message: string) => notifications.push(message), setWidget: (_key: string, content: unknown) => { widgetUpdates.push(content); }, confirm: async (title: string, message: string, opts?: { signal?: AbortSignal }) => { dialogs.push({ title, message }); return typeof confirm === 'function' ? confirm(opts) : confirm; }, input: async () => 'Base integration review', select: async (title: string, choices: string[]) => { selections.push({ title, choices }); return choices[0]; }, editor: async (_title: string, value: string) => { inspectedByHuman.push(value); return undefined; } } } : { mode: 'print' });
+  const bind = async (session: any) => session.bindExtensions(interactive ? { mode: 'tui', uiContext: { ...session.extensionRunner.getUIContext(), getEditorText: () => draft, notify: (message: string) => notifications.push(message), setWidget: (_key: string, content: unknown) => { widgetUpdates.push(content); }, confirm: async (title: string, message: string, opts?: { signal?: AbortSignal }) => { dialogs.push({ title, message }); return typeof confirm === 'function' ? confirm(opts) : confirm; }, input: async () => 'Base integration review', select: async (title: string, choices: string[]) => { selections.push({ title, choices }); return choices[0]; }, editor: async () => { assert.fail('Human inspection must not open an editable document'); }, custom: async (factory: any) => {
+      let closed = false;
+      const keys = new KeybindingsManager({ ...TUI_KEYBINDINGS, 'app.tools.expand': { defaultKeys: 'ctrl+o', description: 'Expand details' } });
+      const view = await factory({ terminal: { rows: 24 }, requestRender() {} }, { fg: (_key: string, value: string) => value }, keys, () => { closed = true; });
+      const summary = view.render(100).join('\n');
+      view.handleInput('d'); view.render(100); view.handleInput('\x1b[F');
+      inspectedByHuman.push(`${summary}\n${view.render(100).join('\n')}`);
+      view.handleInput('q'); view.dispose(); assert.equal(closed, true);
+    } } } : { mode: 'print' });
   await bind(runtime.session); runtime.setRebindSession(bind);
   runtime.session.subscribe(event => events.push(event));
   const tool = async (name: string, input: unknown, signal?: AbortSignal) => {
@@ -97,11 +106,11 @@ test('first-contact approval continues the actual model/tool review without prea
     assert.equal(b.observed.length, 0, 'nothing reaches recipient before sender human approval');
     assert.equal(data(await a.tool('comms_inspect', { outbox: 'self' })).data.items.length, 0);
     assert.match(a.dialogs[0].message, /Read-only code review/);
-    assert.match(a.dialogs[0].message, /Yes continues this send automatically/);
+    assert.match(a.dialogs[0].message, /Yes: send this request now/);
     allowSend!(true); await work;
     await waitFor(() => a!.observed.some(m => text(m).includes('NATURAL_REVIEW_FINDINGS')) && a!.runtime.session.isIdle && b!.runtime.session.isIdle);
     assert.equal(a.dialogs.length, 1); assert.equal(b.dialogs.length, 1);
-    assert.match(b.dialogs[0].title, /requesting collaboration/);
+    assert.match(b.dialogs[0].title, /wants to work with you/);
     assert.match(b.dialogs[0].message, /not yet shared with the agent/);
     assert.deepEqual(b.events.filter(e => e.type === 'tool_execution_end').map(e => e.toolName), ['read', 'read', 'comms_message']);
     const sent = data(await a.tool('comms_inspect', { outbox: 'self' })).data.items[0];
@@ -176,7 +185,7 @@ test('cancelling an outgoing send does not silently answer a later incoming cont
     b.confirm(true);
     assert.equal(data(await b.tool('comms_message', { to: a.id(), subject: 'Incoming', text: 'a different incoming request' })).ok, true);
     await waitFor(() => a!.dialogs.length === 2);
-    assert.match(a.dialogs[1].title, /requesting collaboration/);
+    assert.match(a.dialogs[1].title, /wants to work with you/);
     assert.equal(a.observed.length, 0, 'new incoming prompt did not imply consent or admit content');
     assert.doesNotMatch(JSON.stringify(data(await a.tool('comms_inspect', { queue: 'self' }))), /a different incoming request/);
   } finally { await b?.close(); await a?.close(); }
@@ -226,7 +235,7 @@ test('installed Base model tools: private inspection boundary and discover → s
     assert.equal(b.observed.length, 0);
     await b.command(`inspect ${privateMessage.message.id}`);
     assert.match(b.inspectedByHuman.at(-1)!, /PRIVATE_BODY/);
-    const privateHandle = JSON.parse(b.inspectedByHuman.at(-1)!).returnHandle;
+    const privateHandle = b.inspectedByHuman.at(-1)!.match(/Return handle: ([0-9a-f-]{36})/)![1];
     b.responses([
       call('comms_inspect', { queue: 'self' }), call('comms_inspect', { message: privateMessage.message.id }), call('comms_inspect', { exchange: privateMessage.message.exchange }), fauxAssistantMessage('Held for human approval.'),
     ]);
@@ -339,7 +348,7 @@ test('native rename updates exact discovery, first-contact confirmation and cont
     await waitFor(async () => data(await a!.tool('comms_peers', { view: 'all' })).data.items.some((p: any) => p.id === id && p.name === 'Renamed Reviewer'));
     a.confirm(true); await a.command('approve');
     assert.ok(a.selections.at(-1)!.choices.includes(`Renamed Reviewer · ${id}`));
-    assert.match(a.dialogs.at(-1)!.message, /Renamed Reviewer/);
+    assert.match(a.dialogs.at(-1)!.title, /Renamed Reviewer/);
     b.runtime.session.setSessionName('');
     await waitFor(async () => data(await a!.tool('comms_peers', {})).data.items.some((p: any) => p.id === id && p.name === id));
     b.runtime.session.setSessionName('Latest Reviewer');
@@ -365,7 +374,7 @@ test('revoked paused contact is recoverable through the same requests command ad
     const dialogsBefore = b.dialogs.length;
     await b.command('requests');
     assert.equal(b.dialogs.length, dialogsBefore + 1, 'advertised recovery opens the actual held request');
-    assert.match(b.dialogs.at(-1)!.title, /requesting collaboration/);
+    assert.match(b.dialogs.at(-1)!.title, /wants to work with you/);
     assert.match(b.dialogs.at(-1)!.message, /REVOKED_QUEUE_CONTENT/);
     assert.equal(b.observed.length, 1, 'reapproval does not bypass Pause');
     await b.command('resume');

@@ -7,6 +7,7 @@ import { connect } from './transport/start.ts';
 import { IntercomClient } from './transport/broker/client.ts';
 import type { SessionInfo, Message as WireMessage } from './transport/types.ts';
 import { registerInlineCards, type CardMessage } from './inline-card.ts';
+import { approvalPrompt, showInspection } from './human-view.ts';
 
 const RESET = 'Contacts, approval, queues, outbox and return handles are memory-only and reset on reload/switch/restart. Native saved session IDs remain stable. Your first send asks for contact approval and continues if you allow it. Incoming contact requests are held for your approval.';
 const HELP = 'Stop ends the current run; later peers may wake it. Pause holds peer admission/wakes, not current work or already-posted content. /comms approve | revoke | pause | resume | status | inspect | requests';
@@ -58,9 +59,8 @@ export default function comms(pi: ExtensionAPI) {
     const operation = (async () => {
       const abort = signal ? AbortSignal.any([lifetime.signal, signal]) : lifetime.signal;
       try {
-        const preview = text.replace(/\s+/g, ' ');
-        const allowed = await context.ui.confirm(direction === 'send' ? `Allow collaboration with ${label}?` : `${label} is requesting collaboration`,
-          `Work: ${work}\nExact session: ${id}\n${direction === 'receive' ? 'Incoming request (not yet shared with the agent)' : 'Request to send'}\nPreview: ${preview.slice(0, 160)}${preview.length > 160 ? '…' : ''}\n\nAllow requests, clarifications and replies for this work until reload/restart. Your directions and tool permissions still apply.\n${direction === 'send' ? 'Yes continues this send automatically. No/Esc sends nothing.' : 'Yes admits held messages when ready. No/Esc keeps them human-only; /comms requests reopens the decision.'}`, { signal: abort });
+        const prompt = approvalPrompt(id, label, work, text, direction);
+        const allowed = await context.ui.confirm(prompt.title, prompt.message, { signal: abort });
         if (abort.aborted || runtime !== current || stopped) throw new Error('CONTACT_CANCELLED');
         if (!allowed) { if (direction === 'send') declined.add(id); throw new Error('CONTACT_NOT_APPROVED'); }
         declined.delete(id);
@@ -263,7 +263,7 @@ export default function comms(pi: ExtensionAPI) {
         if (!peer || selected === runtime.self) throw new Error('TARGET_UNAVAILABLE');
         const collaboration = await commandCtx.ui.input('What work is this colleague approved for?');
         if (!collaboration?.trim()) return;
-        if (await commandCtx.ui.confirm('Approve contact for this work?', `${peer.name}\nNative session: ${selected}\nWork: ${collaboration}\nAllows requests, clarifications and handbacks for this collaboration, not new missions. Peer traffic cannot grant approval. Approval is lost on reload/restart.`)) {
+        if (await commandCtx.ui.confirm(`Work with ${peer.name}?`, `Work: ${collaboration}\n\nAllows requests, clarifications and replies for this work.\nDoes not send a message or change your directions/tool permissions.\n\nSession: ${selected}\nApproval lasts until reload/restart.`)) {
           runtime.approveFromOwner({ id: selected, name: peer.name, context: collaboration.trim() }); declined.delete(selected);
         }
       } catch (error) { commandCtx.ui.notify(String(error), 'error'); }
@@ -271,10 +271,11 @@ export default function comms(pi: ExtensionAPI) {
       return;
     }
     if (action === 'inspect') {
-      const data = id && /^[0-9a-f-]{36}$/i.test(id) ? runtime.inspect({ message: id }, 'human') : runtime.inspect({ queue: 'self' }, 'human');
-      approvalDialog = true;
-      try { if (commandCtx.hasUI) await commandCtx.ui.editor('Peer evidence (inspection does not admit messages)', JSON.stringify(data, null, 2)); }
-      finally { approvalDialog = false; }
+      const current = runtime;
+      observeSaved(); approvalDialog = true;
+      try {
+        await showInspection(commandCtx, cursor => id && /^[0-9a-f-]{36}$/i.test(id) ? current.inspect({ message: id }, 'human') : current.inspect({ queue: 'self', ...(cursor ? { cursor } : {}) }, 'human'), { self: current.self, name, approved: current.isApproved }, lifetime.signal);
+      } finally { approvalDialog = false; }
       return;
     }
     commandCtx.ui.notify(`${HELP}\n${runtime.waiting.length} waiting · ${hold() ?? 'ready'}\n${runtime.known().map(p => `${name(p.id)} · ${p.id} · ${p.context}`).join('\n')}\n${RESET}`, 'info');

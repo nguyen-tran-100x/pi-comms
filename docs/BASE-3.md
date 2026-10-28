@@ -19,8 +19,8 @@ Date: 2026-10-28. Starting revision: `bbafcce4896f515204dd6da04a626c46f2bd358c`,
 Environment: macOS arm64, Node 22.23.3, Pi 1.4.0.
 
 - `npm run check`: production source TypeScript check passes.
-- `npm run test:base`: 16/16 pass. Includes actual compiled extension loaded by native resource loader; isolated broker and two real Pi sessions with a scripted local faux provider.
-- `npm test`: 43/43 pass: 16 Base tests plus 27 historical/prototype spike tests. These are not 43 tests of the production implementation.
+- `npm run test:base`: 22/22 pass. Includes actual compiled extension loaded by native resource loader; isolated broker and two real Pi sessions with a scripted local faux provider.
+- `npm test`: 49/49 pass: 22 Base tests plus 27 historical/prototype spike tests. These are not 49 tests of the production implementation.
 - `npm run test:original`: 32/32 pinned upstream regression tests pass.
 - `npm run test:artifact`: builds/packs, installs tarball into a temporary prefix with peers omitted, loads via real Pi resource loader, then reruns 8 native Base integration scenarios against the installed artifact. No normal environment installation.
 - `git diff --check`: passes.
@@ -51,6 +51,18 @@ Four new native integration scenarios (also rerun from the installed artifact) c
 - Editor-draft and Pause precedence for incoming contact decisions; session replacement cancels an old dialog even if its late result says Allow.
 
 These are deterministic execution/interaction tests, not a claim that an unfamiliar model or the owner has accepted the revised UX. No paid trials repeated. Real-use acceptance is still pending.
+
+## Readable human inspection and approval presentation
+
+`/comms inspect` now opens a bounded read-only native view, not an editable JSON document. Counterpart, subject, contact state, latest observed fact, full message content and references are primary. Technical details reveal native/message/exchange IDs, timestamps, original reply/correction references, return handles, every fact/source/evidence reference, response IDs and outcome codes. The projection still reads the existing runtime records; no second inbox or authoritative state is introduced.
+
+The view uses native Text wrapping and ScrollView scroll state, keyboard/mouse navigation, Details and next/previous message pages. Queue pagination retains complete payloads. Closing/aborting restores the underlying work; the owning inspection continues to hold peer admission. No editor exists in this path. RPC uses read-only native selections over the same presentation; callers without a UI do not load or emit human-only content. Agent/script inspection and its withholding boundary are unchanged.
+
+First-contact confirmation now puts colleague, work and the explicit Yes/No effect before the preview and exact native identity. The same prompt retains approval scope, user/tool precedence and reset lifetime; manual contact setup explicitly says it does not send a message. Consent and routing semantics are unchanged.
+
+Six new Base tests cover prompt order/scope, complete human content with hidden/revealed technical evidence, 65-message pagination/back navigation without consumption, narrow/wide/Unicode rendering and read-only keyboard/mouse/abort behavior, native regular/fullscreen overlay lifecycle/resize, and RPC/no-UI boundaries. The installed-artifact integration path now exercises the actual read-only inspector; its editor mock fails if inspection tries to open one, and subsequent provider requests are still checked for private-content leakage.
+
+A focused independent read-only review found no blocking defect in the view. Native primitives were retained instead of introducing a separate scrolling/modal system. Rendered tests are automated evidence—not real-user readability or accessibility validation. Global arbitrary-modal detection remains outside scope.
 
 ## Session labels and revoked-contact recovery
 

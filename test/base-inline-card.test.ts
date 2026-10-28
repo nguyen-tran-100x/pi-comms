@@ -19,6 +19,14 @@ test('inline cards adapt collapse, full expansion, narrow widths and click behav
   }
 });
 
+test('correction cards identify the relationship collapsed and the exact source expanded', () => {
+  const correction = { ...messages[0], corrects: 'earlier-message-id' };
+  const collapsed = new InlineCard([correction], theme, { expanded: false }).render(80).join('\n');
+  assert.match(collapsed, /Correction/); assert.doesNotMatch(collapsed, /earlier-message-id/);
+  const expanded = new InlineCard([correction], theme, { expanded: true }).render(160).join('\n');
+  assert.match(expanded, /corrects earlier-message-id/);
+});
+
 test('native renderer registration honors global expanded state and missing details', () => {
   let renderer: any;
   registerInlineCards({ registerMessageRenderer: (name: string, fn: any) => { assert.equal(name, 'comms_batch'); renderer = fn; } } as any);

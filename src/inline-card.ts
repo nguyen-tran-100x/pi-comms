@@ -2,7 +2,7 @@ import type { ExtensionAPI, Theme } from '@earendil-works/pi-coding-agent';
 import type { Component, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui';
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 
-export type CardMessage = { id: string; from: string; to: string; subject: string; text: string; exchange: string; replyTo?: string | null; at: string; fact: 'queued' | 'posted' | 'saved' | 'unknown' };
+export type CardMessage = { id: string; from: string; to: string; subject: string; text: string; exchange: string; replyTo?: string | null; corrects?: string | null; at: string; fact: 'queued' | 'posted' | 'saved' | 'unknown' };
 
 // Adapted from intercom's MIT InlineMessageComponent; notice in THIRD-PARTY-NOTICES.md.
 export class InlineCard implements Component {
@@ -26,9 +26,10 @@ export class InlineCard implements Component {
     for (const message of this.messages) {
       const summary = `${message.from} → ${message.to} · ${message.subject} · ${message.fact}`;
       if (this.messages.length > 1 || this.expansion.expanded) lines.push(frame(summary));
+      if (message.corrects) lines.push(frame('Correction to an earlier message'));
       if (this.expansion.expanded) {
         for (const line of wrapTextWithAnsi(message.text, inner)) lines.push(frame(line));
-        for (const line of wrapTextWithAnsi(`Message ${message.id} · exchange ${message.exchange} · ${message.at}${message.replyTo ? ` · response to ${message.replyTo}` : ''}`, inner)) lines.push(frame(this.theme.fg('dim', line)));
+        for (const line of wrapTextWithAnsi(`Message ${message.id} · exchange ${message.exchange} · ${message.at}${message.replyTo ? ` · response to ${message.replyTo}` : ''}${message.corrects ? ` · corrects ${message.corrects}` : ''}`, inner)) lines.push(frame(this.theme.fg('dim', line)));
       } else if (this.messages.length === 1) lines.push(frame(message.text.replace(/\s+/g, ' ').trim()));
     }
     lines.push(frame(this.theme.fg('dim', this.expansion.expanded ? 'Peer requests do not override user directives.' : 'Ctrl+O expands · Click (fullscreen)')));

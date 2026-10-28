@@ -19,19 +19,31 @@ Date: 2026-10-28. Starting revision: `bbafcce4896f515204dd6da04a626c46f2bd358c`,
 Environment: macOS arm64, Node 22.23.3, Pi 1.4.0.
 
 - `npm run check`: production source TypeScript check passes.
-- `npm run test:base`: 7/7 pass. Includes actual compiled extension loaded by native resource loader; isolated broker and two real Pi sessions with a scripted local faux provider.
-- `npm test`: 34/34 Base plus historical spike tests pass.
+- `npm run test:base`: 10/10 pass. Includes actual compiled extension loaded by native resource loader; isolated broker and two real Pi sessions with a scripted local faux provider.
+- `npm test`: 37/37 pass: 10 Base tests plus 27 historical/prototype spike tests. These are not 37 tests of the production implementation.
 - `npm run test:original`: 32/32 pinned upstream regression tests pass.
 - `npm run test:artifact`: builds/packs, installs tarball into a temporary prefix with peers omitted, loads via real Pi resource loader, then reruns the native Base journey against the installed artifact. No normal environment installation.
 - `git diff --check`: passes.
+- Clean temporary checkout: `npm ci --ignore-scripts && npm run verify` passes without pre-existing node_modules, dist or upstream fixture.
 
-Native Base journey exercises refusal/confirmation of owner approval, known/all discovery, held unapproved traffic, return after multiple native turns and tool calls, draft hold, two handbacks in one batch after queued human steering, later C in a later batch, actual Stop/later peer wake, Pause/Resume buffering, `AgentSessionRuntime.newSession`, `switchSession` to resume the original native ID, lost volatile approval/linkage, and `fork` to a distinct ID. Tools run through native registered definitions for inspection/sending; normal host permission regression remains covered by the unchanged native spike test.
+The original Base lifecycle journey exercises refusal/confirmation of owner approval, known/all discovery, held unapproved traffic, driver-invoked tool definitions separated by human prompts, draft hold, two handbacks in one batch after queued human steering, later C in a later batch, actual Stop/later peer wake, Pause/Resume buffering, `AgentSessionRuntime.newSession`, `switchSession` to resume the original native ID, lost volatile approval/linkage, and `fork` to a distinct ID. That journey alone is not evidence of model-selected tool integration.
+
+The added deterministic Base model/tool journey uses the real native tool execution loop and is rerun against the temporarily installed tarball. Coordinator calls `comms_peers`, uses the returned exact approved ID in `comms_message`; recipient makes two real `read` tool turns against synthetic files, then extracts the return handle from its received model context and calls `comms_message`. Assertions check actual `tool_execution_end` events, read results reaching subsequent provider requests, linked response IDs/exchange and resulting runtime state. Standard approval selection is exercised without supplying IDs, using scripted native UI responses (not human usability validation). The unchanged prototype test remains the evidence for host permission denial/compaction, not the Base trajectory.
 
 Separate real-wire production test deliberately replaces a resolved recipient connection before exact send: stale epoch is definitely rejected, the same native ID is resolved once more, and exactly one message arrives at the replacement. A same-named session receives nothing. Revocation between resolution/send prevents transmission; unknown send outcome is attempted once. Duplicate claims are explicit.
 
 A bounded independent read-only review identified the omitted startup lock and receive-only reconnect gap; both were repaired and regression-tested. Simultaneous first connects now share one broker; native sessions automatically rejoin after broker termination using bounded reconnect backoff. Active duplicate claims remain rejected; a destroyed old socket can be reclaimed. Replies whose original request record was lost retain full content with explicit `context-lost` linkage rather than being dropped. Native settlement releases wake reservations. These are local fixes verified by tests, not a second independent review claim.
 
 No model API calls were made for Base verification. Earlier paid Gate C evidence is historical, not repeated.
+
+## Review corrections after d1491d1
+
+- Reproduced the confirmed unapproved-inspection leak with a failing regression before the fix. Model-facing projections now expose only routing IDs and `CONTACT_NOT_APPROVED` metadata for unapproved incoming records, withholding subject/body/references/return handles across queue, message and exchange views, including after revocation. `/comms inspect` explicitly selects the complete human projection.
+- The installed-artifact model/tool journey sends an unapproved message, inspects it via three actual model tool calls, and checks all subsequent provider requests for leaked payload or handle. Human inspection retains full evidence; later approval enables normal content visibility without granting authority from traffic.
+- Inspection now returns `localTransport.connectivity` and local hold state, not a misleading global/counterpart `current.presence`. Regression switches the recipient away, confirms exact-peer discovery says offline while inspection labels only the sender's local connection online.
+- Cards carry `corrects`, show a collapsed correction label and expanded referenced ID. Renderer and actual envelope-to-card projection are tested.
+- Two overlapping Base exchanges run interleaved clarification, reply and correction cycles; exact exchange membership and reply/correction references are asserted. These additional messages are driver-issued, not claimed as model judgment.
+- `npm run verify` prepares the pinned fixture before combined tests, then runs build/typecheck, combined tests, separate originals and installed-artifact checks. Fresh-checkout instructions follow that dependency order.
 
 ## Dependency advisory assessment
 
@@ -56,7 +68,7 @@ This is a surface comparison, not an invented reduction percentage:
 3. Human approval uses standard host confirmation UI. There is no agent approval tool or policy bypass, but unrestricted same-account code/other extensions are not isolated. No broader security claim.
 4. Reception checks pending native input/draft and its own approval/inspection interaction only; no arbitrary modal/attached-view protection. Input arriving after post may follow it.
 5. Only Pi 1.4.0/macOS arm64/Node 22.23.3 verified. No untested cross-harness or platform support claim.
-6. No paid model trial repeated, global install, merge, push, release or publication. Maintainer/release/rollout approval remains separate.
+6. No paid model trial repeated, global install, merge or release. Base candidate d1491d1 was pushed to PR #7 on the owner's explicit request; this is not shipment. Maintainer/release/rollout approval remains separate.
 
 ## Representative human walkthrough
 

@@ -49,7 +49,7 @@ export default function comms(pi: ExtensionAPI) {
     const m = entry.message;
     const kinds = entry.facts.map(f => f.kind);
     const fact = kinds.includes('saved') ? 'saved' : kinds.includes('posted') ? 'posted' : kinds.includes('queued') ? 'queued' : 'unknown';
-    return { id: m.id, from: name(m.from), to: name(m.to), subject: m.subject, text: (entry.linkage ? 'Context lost: referenced request is unavailable; do not infer restored linkage.\n' : '') + m.text + m.refs.map(r => `\n${r.label}: ${r.uri}`).join(''), exchange: m.exchange, replyTo: m.replyTo, at: m.createdAt, fact };
+    return { id: m.id, from: name(m.from), to: name(m.to), subject: m.subject, text: (entry.linkage ? 'Context lost: referenced request is unavailable; do not infer restored linkage.\n' : '') + m.text + m.refs.map(r => `\n${r.label}: ${r.uri}`).join(''), exchange: m.exchange, replyTo: m.replyTo, corrects: m.corrects, at: m.createdAt, fact };
   }
   function pump(busyBoundary = false) {
     if (!ctx || !runtime || runtime.paused || approvalDialog || ctx.hasPendingMessages() || (ctx.hasUI && ctx.ui.getEditorText().length)) return;
@@ -190,7 +190,7 @@ export default function comms(pi: ExtensionAPI) {
       return;
     }
     if (action === 'inspect') {
-      const data = id && /^[0-9a-f-]{36}$/i.test(id) ? runtime.inspect({ message: id }) : runtime.inspect({ queue: 'self' });
+      const data = id && /^[0-9a-f-]{36}$/i.test(id) ? runtime.inspect({ message: id }, 'human') : runtime.inspect({ queue: 'self' }, 'human');
       approvalDialog = true;
       try { if (commandCtx.hasUI) await commandCtx.ui.editor('Peer evidence (inspection does not admit messages)', JSON.stringify(data, null, 2)); }
       finally { approvalDialog = false; }
@@ -218,6 +218,6 @@ export default function comms(pi: ExtensionAPI) {
       if (sent.state !== 'accepted') return Promise.reject(new Error(`${sent.code ?? (sent.state === 'unknown' ? 'OUTCOME_UNKNOWN' : 'TARGET_UNAVAILABLE')}: message ${sent.message.id}; inspect outbox for evidence`));
       return sent;
     }), renderResult });
-  pi.registerTool({ name: 'comms_inspect', label: 'Inspect communication', description: 'Inspect volatile message, exchange, queue or outbox without consuming it. Facts distinguish accepted/queued/posted/observed saved; responses never mean work completed. Not a polling duty. Missing state after reload is context lost, not delivery proof.', parameters: InspectInput, outputSchema: Output,
-    execute: async (_id, input) => run(() => { validate(InspectInput, input); observeSaved(); return { ...runtime!.inspect(input), current: { hold: hold(), presence: client?.isConnected() ? 'online' : 'offline' } }; }), renderResult });
+  pi.registerTool({ name: 'comms_inspect', label: 'Inspect communication', description: 'Inspect volatile message, exchange, queue or outbox without consuming it. Unapproved incoming payloads and handles are withheld; ask the user to inspect/approve with /comms. Facts distinguish accepted/queued/posted/observed saved; responses never mean work completed. Not a polling duty. Missing state after reload is context lost, not delivery proof.', parameters: InspectInput, outputSchema: Output,
+    execute: async (_id, input) => run(() => { validate(InspectInput, input); observeSaved(); return { ...runtime!.inspect(input), localTransport: { hold: hold(), connectivity: client?.isConnected() ? 'online' : 'offline' } }; }), renderResult });
 }

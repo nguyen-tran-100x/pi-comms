@@ -33,7 +33,7 @@ Do not change normal installations or publish this candidate without owner appro
 3. Describe the collaboration and confirm. Declining/cancelling records no approval.
 4. Ask your agent to communicate. No human ID relay or per-message confirmation is required for that collaboration.
 
-Each recipient follows its own user mandate. Unapproved traffic stays human-visible in `/comms inspect`, but cannot wake the model or grant approval. For standalone bidirectional work, approve the colleague on both sides. Peer messages cannot broaden approval or bypass host tool permissions. Same-account IPC and prompt attribution are not a security sandbox.
+Each recipient follows its own user mandate. Unapproved traffic stays human-visible in `/comms inspect`, but cannot wake the model or grant approval. Agent inspection returns only IDs and a contact-approval hold; it withholds the incoming subject, body, references and return handle until approval. For standalone bidirectional work, approve the colleague on both sides. Peer messages cannot broaden approval or bypass host tool permissions. Same-account IPC and prompt attribution are not a security sandbox.
 
 ## Everyday commands
 
@@ -55,7 +55,7 @@ Native inline cards show counterpart, subject, batch and receipt; Ctrl+O expands
 - `comms_message({respondTo, text, refs?, corrects?})`: answer the explicit return handle after turns/tools; no blocking ask.
 - `comms_inspect({message})`, `({exchange,cursor?})`, `({queue:"self",cursor?})`, `({outbox:"self",cursor?})`: non-consuming runtime evidence. Not a polling duty.
 
-Schemas reject unknown fields and ambiguous destinations. Native UUIDs only, no name/prefix routing. Corrections reference the sender's prior message to the same peer. References are pointers, never uploads. Messages over 900,000 serialized bytes reject with a reference-based next step. Inspection pages retain full items and return a cursor. Multiple replies are allowed, not owed.
+Schemas reject unknown fields and ambiguous destinations. Native UUIDs only, no name/prefix routing. Corrections reference the sender's prior message to the same peer. References are pointers, never uploads. Messages over 900,000 serialized bytes reject with a reference-based next step. Inspection pages retain full approved items and return a cursor. `localTransport.connectivity` describes this session's broker connection, not the counterpart's presence; use `comms_peers` for exact colleague presence. Multiple replies are allowed, not owed.
 
 Same-ID reconnect refresh is internal: after a definite stale-epoch rejection, re-resolve only that same native ID once and recheck approval. Unknown send outcome never automatically retries. Concurrent active claims are rejected explicitly. A fork/new session has a different identity.
 
@@ -75,12 +75,21 @@ Pause and finish/inspect outstanding work before replacing the package. Record u
 
 ## Verification
 
+After `npm ci --ignore-scripts`, run the complete check in the required order:
+
 ```sh
-npm run test:base          # compiled production path + native scripted-provider integration, no paid calls
-npm test                  # Base and historical spike regressions; no paid calls
-npm run prepare:fixture   # downloads pinned MIT upstream into ignored .scratch/upstream
-npm run test:original     # original regressions in isolated temporary runtime
+npm run verify            # prepare pinned fixture, build/typecheck, all tests, originals, installed artifact
+```
+
+Individual steps:
+
+```sh
+npm run prepare:fixture   # required before npm test in a fresh checkout; downloads pinned MIT upstream
+npm run test:base          # builds + tests production path, no paid calls
+npm test                  # Base and historical/prototype tests, no paid calls
+npm run test:original      # separate pinned original-intercom regressions
 npm run check
+npm run test:artifact     # pack/install in isolation + rerun Base model/tool and lifecycle journeys
 ```
 
 Packaged-artifact installation is tested in a temporary prefix/agent directory, never a normal installation. Dependency advisory assessment, exact evidence and the outstanding **real-person walkthrough** are in [BASE-3.md](docs/BASE-3.md). Automated TUI/scripted-provider tests are not human usability validation.

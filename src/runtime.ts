@@ -74,32 +74,39 @@ export class Runtime {
     this.waiting = this.waiting.filter(id => !posted.has(id));
     ids.forEach(id => this.fact(id, 'posted', 'native Pi sendMessage'));
   }
+  private project(entry: Entry, audience: 'agent' | 'human') {
+    if (audience === 'agent' && entry.message.from !== this.self && !this.isApproved(entry.message.from)) {
+      const { id, exchange, from, to } = entry.message;
+      return { message: { id, exchange, from, to }, evidence: 'withheld', code: 'CONTACT_NOT_APPROVED' };
+    }
+    return this.view(entry);
+  }
   view(entry: Entry) {
     return structuredClone({ ...entry, responses: [...this.records.values()].filter(r => r.message.replyTo === entry.message.id).map(r => r.message.id), evidence: 'available' });
   }
-  page(entries: Entry[], cursor?: string) {
+  page(entries: Entry[], cursor?: string, audience: 'agent' | 'human' = 'agent') {
     const start = cursor ? entries.findIndex(e => e.message.id === cursor) + 1 : 0;
     if (cursor && start === 0) throw new Error('CONTEXT_LOST: cursor no longer available');
-    const items: ReturnType<Runtime['view']>[] = [];
+    const items: ReturnType<Runtime['project']>[] = [];
     let bytes = 0;
     for (const entry of entries.slice(start)) {
-      const view = this.view(entry); const size = Buffer.byteLength(JSON.stringify(view));
+      const view = this.project(entry, audience); const size = Buffer.byteLength(JSON.stringify(view));
       if (items.length && bytes + size > MAX_PAGE_BYTES) break;
       items.push(view); bytes += size;
       if (items.length === 30) break;
     }
     return { items, nextCursor: start + items.length < entries.length ? items.at(-1)!.message.id : null };
   }
-  inspect(input: InspectInput) {
+  inspect(input: InspectInput, audience: 'agent' | 'human' = 'agent') {
     if ('message' in input) {
       const entry = this.records.get(input.message);
       if (!entry) throw new Error('CONTEXT_LOST');
-      return this.view(entry);
+      return this.project(entry, audience);
     }
     const records = [...this.records.values()];
     const selected = 'queue' in input ? this.waiting.map(id => this.records.get(id)!) : 'outbox' in input ? records.filter(e => e.message.from === this.self) : records.filter(e => e.message.exchange === input.exchange);
     if ('exchange' in input && !selected.length) throw new Error('CONTEXT_LOST');
-    return this.page(selected, input.cursor);
+    return this.page(selected, input.cursor, audience);
   }
 }
 export const MAX_PAGE_BYTES = 900_000;

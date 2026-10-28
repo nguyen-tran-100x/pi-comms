@@ -30,6 +30,7 @@
   "description": "User-approved, exact-session Pi communication with human-first batching",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "verify": "npm run prepare:fixture && npm run build && npm run check && npm test && npm run test:original && npm run test:artifact",
     "check": "tsc --noEmit --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --allowImportingTsExtensions src/extension.ts",
     "test:artifact": "node scripts/test-artifact.mjs",
     "prepack": "npm run build",

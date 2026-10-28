@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fauxProvider, fauxAssistantMessage } from '@earendil-works/pi-ai';
-import { createAgentSessionRuntime, createAgentSessionServices, createAgentSessionFromServices, ModelRuntime, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
+import { createAgentSessionRuntime, createAgentSessionServices, createAgentSessionFromServices, createReadTool, ModelRuntime, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { fileURLToPath } from 'node:url';
 const extensionPath = process.env.PI_COMMS_TEST_EXTENSION ?? fileURLToPath(new URL('../dist/extension.js', import.meta.url));
 
@@ -21,7 +21,7 @@ async function participant(label: string) {
   const dir = join(root, label); mkdirSync(dir);
   const faux = fauxProvider({ provider: `comms-base-${label}` });
   const models = await ModelRuntime.create({ authPath: join(root, `${label}-auth.json`), modelsPath: null, refreshOnCreate: false }); models.registerNativeProvider(faux.provider);
-  const observed: any[][] = []; const notifications: string[] = [];
+  const observed: any[][] = []; const notifications: string[] = []; const inspectedByHuman: string[] = []; const events: any[] = [];
   let draft = ''; let confirm = true; let hold = false; const releases: (() => void)[] = [];
   faux.setResponses(Array.from({ length: 100 }, () => async context => {
     observed.push(structuredClone(context.messages));
@@ -31,18 +31,20 @@ async function participant(label: string) {
   const manager = SessionManager.create(dir, join(root, 'sessions'));
   const factory = async ({ cwd, agentDir, sessionManager, sessionStartEvent }: any) => {
     const services = await createAgentSessionServices({ cwd, agentDir, modelRuntime: models, settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }), resourceLoaderOptions: { noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, additionalExtensionPaths: [extensionPath] } });
-    const created = await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent, model: faux.getModel(), noTools: 'builtin' });
+    const created = await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent, model: faux.getModel(), noTools: 'builtin', customTools: [createReadTool(cwd)] });
     return { ...created, services, diagnostics: [] };
   };
   const runtime = await createAgentSessionRuntime(factory, { cwd: dir, agentDir: root, sessionManager: manager });
-  const bind = async (session: any) => session.bindExtensions({ mode: 'tui', uiContext: { ...session.extensionRunner.getUIContext(), getEditorText: () => draft, notify: (message: string) => notifications.push(message), confirm: async () => confirm, input: async () => 'Base integration review', select: async (_title: string, choices: string[]) => choices[0], editor: async () => undefined } });
+  const bind = async (session: any) => session.bindExtensions({ mode: 'tui', uiContext: { ...session.extensionRunner.getUIContext(), getEditorText: () => draft, notify: (message: string) => notifications.push(message), confirm: async () => confirm, input: async () => 'Base integration review', select: async (_title: string, choices: string[]) => choices[0], editor: async (_title: string, value: string) => { inspectedByHuman.push(value); return undefined; } } });
   await bind(runtime.session); runtime.setRebindSession(bind);
+  runtime.session.subscribe(event => events.push(event));
   const tool = async (name: string, input: unknown) => {
     const session = runtime.session; const runner = session.extensionRunner!;
     const definition = runner.getToolDefinition(name)!;
     return definition.execute(randomUUID(), input, undefined, undefined, runner.createToolContext(randomUUID(), undefined));
   };
-  return { runtime, observed, notifications, tool, manager,
+  return { runtime, observed, notifications, inspectedByHuman, events, tool, manager, dir,
+    responses: (responses: any[]) => faux.setResponses(responses.map(response => async (context: any) => { observed.push(structuredClone(context.messages)); return typeof response === 'function' ? response(context) : response; })),
     id: () => runtime.session.sessionId,
     command: (args: string) => runtime.session.prompt(`/comms ${args}`),
     draft: (value: string) => { draft = value; }, confirm: (value: boolean) => { confirm = value; }, hold: (value: boolean) => { hold = value; },
@@ -51,6 +53,107 @@ async function participant(label: string) {
   };
 }
 const data = (result: any) => result.structuredContent;
+
+const call = (name: string, args: unknown) => ({ ...fauxAssistantMessage(''), stopReason: 'toolUse' as const, content: [{ type: 'toolCall' as const, id: randomUUID(), name, arguments: args }] });
+const lastResult = (context: any, name: string) => {
+  const result = context.messages.filter((m: any) => m.role === 'toolResult' && m.toolName === name).at(-1);
+  assert.ok(result, `missing actual ${name} result`);
+  return JSON.parse(text([result]));
+};
+
+test('installed Base model tools: private inspection boundary and discover → send → two reads → contextual reply', async () => {
+  let a: Awaited<ReturnType<typeof participant>> | undefined, b: Awaited<ReturnType<typeof participant>> | undefined;
+  try {
+    a = await participant('tool-coordinator'); b = await participant('tool-reviewer');
+    // Select through the normal human selector, rather than supplying an ID.
+    await a.command('approve');
+    const privateMessage = data(await a.tool('comms_message', { to: b.id(), subject: 'PRIVATE_SUBJECT', text: 'PRIVATE_BODY', refs: [{ uri: 'file:///PRIVATE_REFERENCE', label: 'PRIVATE_LABEL' }] })).data;
+    await waitFor(() => b!.notifications.some(n => /Unapproved peer/.test(n)));
+    assert.equal(b.observed.length, 0);
+    await b.command(`inspect ${privateMessage.message.id}`);
+    assert.match(b.inspectedByHuman.at(-1)!, /PRIVATE_BODY/);
+    const privateHandle = JSON.parse(b.inspectedByHuman.at(-1)!).returnHandle;
+    b.responses([
+      call('comms_inspect', { queue: 'self' }), call('comms_inspect', { message: privateMessage.message.id }), call('comms_inspect', { exchange: privateMessage.message.exchange }), fauxAssistantMessage('Held for human approval.'),
+    ]);
+    await b.runtime.session.prompt('Inspect waiting metadata only.');
+    for (const request of b.observed) {
+      assert.doesNotMatch(text(request), /PRIVATE_/);
+      assert.ok(!JSON.stringify(request).includes(privateHandle));
+    }
+    assert.match(text(b.observed.at(-1)!), /CONTACT_NOT_APPROVED/);
+    // Approve while paused: metadata-only inspection changes to complete evidence, without automatic intake.
+    await b.command('pause'); await b.command('approve');
+    assert.match(JSON.stringify(data(await b.tool('comms_inspect', { message: privateMessage.message.id }))), /PRIVATE_BODY/);
+    b.responses([fauxAssistantMessage('No reply required for the earlier message.')]);
+    await b.command('resume'); await waitFor(() => b!.runtime.session.isIdle && b!.observed.some(m => text(m).includes('PRIVATE_BODY')));
+    writeFileSync(join(b.dir, 'evidence.txt'), 'Evidence alpha: preserve exact session identity.');
+    writeFileSync(join(b.dir, 'detail.txt'), 'Evidence beta: no durable queue required.');
+    b.responses([
+      context => { assert.match(text(context.messages), /return handle [0-9a-f-]{36}/); return call('read', { path: 'evidence.txt' }); },
+      context => { assert.match(text(context.messages), /Evidence alpha/); return call('read', { path: 'detail.txt' }); },
+      context => {
+        assert.match(text(context.messages), /Evidence beta/);
+        const batch = context.messages.filter((m: any) => text([m]).includes('Model tool review') && text([m]).includes('return handle')).at(-1);
+        assert.ok(batch, 'request context supplies return handle');
+        const handle = text([batch]).match(/return handle ([0-9a-f-]{36})/)![1];
+        return call('comms_message', { respondTo: handle, text: 'MODEL_FINDINGS: exact identity and volatile state verified.' });
+      },
+      context => { assert.equal(lastResult(context, 'comms_message').ok, true); return fauxAssistantMessage('Review returned.'); },
+    ]);
+    a.responses([
+      call('comms_peers', {}),
+      context => { const peers = lastResult(context, 'comms_peers').data.items; assert.equal(peers[0].id, b!.id()); assert.equal(peers[0].approved, true); return call('comms_message', { to: peers[0].id, subject: 'Model tool review', text: 'Read evidence.txt and detail.txt, then return findings using the supplied handle.' }); },
+      context => { assert.equal(lastResult(context, 'comms_message').ok, true); return fauxAssistantMessage('Waiting for the review.'); },
+      context => { assert.match(text(context.messages), /MODEL_FINDINGS/); return fauxAssistantMessage('Linked findings received.'); },
+    ]);
+    await a.runtime.session.prompt('Find the approved reviewer and request the two-file review.');
+    await waitFor(() => a!.observed.some(m => text(m).includes('MODEL_FINDINGS')) && a!.runtime.session.isIdle && b!.runtime.session.isIdle);
+    const aTools = a.events.filter(e => e.type === 'tool_execution_end').map(e => e.toolName);
+    const bTools = b.events.filter(e => e.type === 'tool_execution_end').map(e => e.toolName);
+    assert.deepEqual(aTools, ['comms_peers', 'comms_message']);
+    assert.deepEqual(bTools, ['comms_inspect', 'comms_inspect', 'comms_inspect', 'read', 'read', 'comms_message']);
+    assert.ok(b.events.filter(e => e.type === 'tool_execution_end').every(e => !e.isError));
+    const sent = data(await a.tool('comms_inspect', { outbox: 'self' })).data.items.find((e: any) => e.message.subject === 'Model tool review');
+    assert.equal(sent.responses.length, 1);
+    const reply = data(await a.tool('comms_inspect', { message: sent.responses[0] })).data;
+    assert.equal(reply.message.replyTo, sent.message.id); assert.equal(reply.message.exchange, sent.message.exchange);
+    assert.match(reply.message.text, /MODEL_FINDINGS/);
+    // Two installed-runtime exchanges remain distinct through interleaved clarification and correction.
+    await a.command('pause'); await b.command('pause');
+    const first = data(await a.tool('comms_message', { to: b.id(), subject: 'Overlap X', text: 'Review X' })).data.message;
+    const second = data(await a.tool('comms_message', { to: b.id(), subject: 'Overlap Y', text: 'Review Y' })).data.message;
+    await new Promise(r => setTimeout(r, 30));
+    const atB = async (message: string) => data(await b!.tool('comms_inspect', { message })).data;
+    const atA = async (message: string) => data(await a!.tool('comms_inspect', { message })).data;
+    const clarify = data(await b.tool('comms_message', { respondTo: (await atB(first.id)).returnHandle, text: 'Clarify X?' })).data.message;
+    const answerY = data(await b.tool('comms_message', { respondTo: (await atB(second.id)).returnHandle, text: 'Y initial finding' })).data.message;
+    await new Promise(r => setTimeout(r, 30));
+    const clarification = data(await a.tool('comms_message', { respondTo: (await atA(clarify.id)).returnHandle, text: 'X clarification' })).data.message;
+    const correctedY = data(await b.tool('comms_message', { respondTo: (await atB(second.id)).returnHandle, text: 'Y corrected finding', corrects: answerY.id })).data.message;
+    await new Promise(r => setTimeout(r, 30));
+    const answerX = data(await b.tool('comms_message', { respondTo: (await atB(clarification.id)).returnHandle, text: 'X final finding' })).data.message;
+    await new Promise(r => setTimeout(r, 30));
+    const x = data(await a.tool('comms_inspect', { exchange: first.exchange })).data.items;
+    const y = data(await a.tool('comms_inspect', { exchange: second.exchange })).data.items;
+    assert.deepEqual(x.map((e: any) => e.message.id), [first.id, clarify.id, clarification.id, answerX.id]);
+    assert.deepEqual(y.map((e: any) => e.message.id), [second.id, answerY.id, correctedY.id]);
+    assert.equal(correctedY.corrects, answerY.id); assert.equal(answerX.replyTo, clarification.id);
+    // Verify the production envelope-to-card projection, not only hand-authored renderer inputs.
+    a.responses([fauxAssistantMessage('Review evidence received; no further reply needed.')]);
+    await a.command('resume'); await waitFor(() => a!.runtime.session.isIdle && a!.runtime.session.sessionManager.getEntries().some(e => e.type === 'custom_message' && (e.details as any)?.messages?.some((m: any) => m.id === correctedY.id)));
+    const correctionCard = a.runtime.session.sessionManager.getEntries().flatMap(e => e.type === 'custom_message' ? (e.details as any)?.messages ?? [] : []).find((m: any) => m.id === correctedY.id);
+    assert.equal(correctionCard.corrects, answerY.id);
+    // Local broker connectivity is not counterpart presence.
+    await b.runtime.newSession();
+    assert.equal(data(await a.tool('comms_peers', {})).data.items.find((p: any) => p.id === sent.message.to).presence, 'offline');
+    const inspected = data(await a.tool('comms_inspect', { message: sent.message.id })).data;
+    assert.equal(inspected.localTransport.connectivity, 'online');
+    assert.equal(inspected.current, undefined);
+    const queue = data(await a.tool('comms_inspect', { queue: 'self' })).data;
+    assert.equal(queue.localTransport.connectivity, 'online'); assert.equal(queue.current, undefined);
+  } finally { await b?.close(); await a?.close(); }
+});
 
 test('packaged extension: first-run approval, exact wire, delayed replies, Stop/Pause, native switch/resume/fork', async () => {
   let a: Awaited<ReturnType<typeof participant>> | undefined;

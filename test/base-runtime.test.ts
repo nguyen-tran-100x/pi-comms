@@ -50,7 +50,7 @@ test('unapproved intake is human-visible but ineligible, approval/revocation con
   r.approveFromOwner(approval(b)); assert.deepEqual(r.eligible(), [envelope.id]);
   r.revokeFromOwner(b); assert.deepEqual(r.eligible(), []);
   r.posted([envelope.id]); r.fact(envelope.id, 'saved', 'native history', 'entry1');
-  const view = r.inspect({ message: envelope.id });
+  const view = r.inspect({ message: envelope.id }, 'human');
   assert.deepEqual(view.facts.map(f => f.kind), ['queued', 'posted', 'saved']);
   assert.equal(view.facts.at(-1)!.evidenceRef, 'entry1');
   const late = { ...envelope, id: randomUUID(), replyTo: randomUUID(), text: 'findings after receiver restart' };

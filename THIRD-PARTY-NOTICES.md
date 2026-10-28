@@ -1,6 +1,6 @@
 # Third-party notices
 
-Original intercom source and tests are downloaded, not vendored, at pinned commit `02913edcd7b1bdb21b480852ff82f674d309c651` from https://github.com/nicobailon/pi-intercom. The attention and native Pi test setup in this spike adapt its lifecycle/fixture patterns. Its MIT notice is retained below. Dependencies retain their own licenses in their npm distributions.
+Selected original intercom transport source is vendored under `src/transport/` from pinned commit `02913edcd7b1bdb21b480852ff82f674d309c651` at https://github.com/nicobailon/pi-intercom. The native inline card adapts its InlineMessageComponent. The spike attention/native Pi tests adapt its lifecycle/fixture patterns; original regression tests are downloaded separately. Adaptations use a separate runtime namespace, exact-only sends, no Herdr discovery and stricter duplicate claims. Its MIT notice is retained below and must accompany packaged/bundled derivatives. Dependencies retain their own licenses in their npm distributions.
 
 ## Original intercom
 

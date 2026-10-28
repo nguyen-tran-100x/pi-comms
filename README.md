@@ -1,39 +1,86 @@
-# pi-comms — isolated feasibility spike
+# pi-comms — Base 0.1.0 candidate
 
-**This is evidence for [Spike #2](https://github.com/tranhoangnguyen03/pi-comms/issues/2), not the base implementation or a loadable Pi extension.** It does not register `/comms`, publish tools, launch real agents, or install a broker into your normal runtime.
+Communication between existing Pi sessions: user-approved contacts, exact native session addresses, replies across turns/tools, and human-first batches. It does not launch agents or own their work.
 
-**Latest result:** [Gate C delivery report](docs/GATE-C-DELIVERY.md) — three live behavior trials completed, 20 model requests; UI validation is automated, not a human study.
+**Local review candidate, not released.** Tested with Pi 1.4.0, Node 22.23.3, macOS arm64. Other versions/platforms are not claimed. [Base integration evidence and limits](docs/BASE-3.md). Historical [spike delivery](docs/GATE-C-DELIVERY.md) and [Gate A/B report](docs/SPIKE-2-REPORT.md) remain unchanged.
 
-Read [the historical Gate A/B report](docs/SPIKE-2-REPORT.md), [the revised identity/Stop-Pause follow-up](docs/SPIKE-2-FOLLOWUP.md), and [the concrete Gate C approval plan](docs/GATE-C-PLAN.md) for results, limits and decisions. The governing proposal remains [blueprint #1](https://github.com/tranhoangnguyen03/pi-comms/issues/1). Base work is tracked separately in [#3](https://github.com/tranhoangnguyen03/pi-comms/issues/3).
-
-## Reproduce
-
-Tested on macOS arm64, Node 22.23.3, npm 10.9.9, Pi 1.4.0.
+## Build and try in isolation
 
 ```sh
 npm ci --ignore-scripts
-npm run prepare:fixture
-npm run test:original
-npm test
+npm run build
+npm run test:base
+npm pack --ignore-scripts   # build first; produces pi-comms-0.1.0.tgz
 ```
 
-`prepare:fixture` downloads a clean original intercom clone into gitignored `.scratch/upstream`, verifies commit `02913edcd7b1bdb21b480852ff82f674d309c651` (0.18.1), and points its dependency resolution at this lockfile's dependencies. It neither patches upstream nor changes installed packages. Re-run with a clean clone if verification fails.
+To try without modifying normal Pi settings, use an owned temporary agent directory and the unpacked package:
 
-The original tests use owned temporary homes and brokers. New tests use real in-process Pi sessions with a scripted faux provider (no API calls), a volatile conversation fixture, and owned temporary broker subprocesses. New broker tests set `HOME`, `USERPROFILE` and `PI_CODING_AGENT_DIR` before importing broker modules. They terminate only their own child processes. Source clones and dependency installation require network access; test model execution does not.
+```sh
+mkdir -p /tmp/comms-try/package
+# Extract the reviewed tarball into /tmp/comms-try/package (npm tarballs contain package/).
+tar -xzf pi-comms-0.1.0.tgz -C /tmp/comms-try
+PI_CODING_AGENT_DIR=/tmp/comms-try/agent pi -e /tmp/comms-try/package
+```
 
-## Files
+Launch the second Pi with the same isolated agent directory. No mandatory init command. The local broker starts at session startup, not factory evaluation. It uses `comms/` under the configured agent directory, separately from intercom. No automatic bridge or migration of existing intercom asks.
 
-- `prototype/attention.ts`: FIFO snapshot posting at eligible busy/idle boundaries. Host readiness is **explicit fixture instrumentation**, not a universal modal detector. Idle pumping is explicit, not a production timer.
-- `prototype/conversations.ts`: volatile native-session-ID approval and return handles. Approval is an owner-side function, never an agent tool. Inputs are typed fixtures, not a validated public protocol.
-- `test/attention.test.ts`: native Pi turn/queue/history/permission/compaction tests and a scripted multi-turn handback.
-- `test/conversations.test.ts`: overlaps, corrections, approvals, queue order, outbox and runtime loss.
-- `test/transport.test.ts`, `test/exact-wire.ts`: real original broker behavior, frozen id+epoch probes, same-native-ID refresh and explicit duplicate claims.
-- `prototype/session-send.ts`: one bounded same-ID refresh after definite rejection; never unknown-outcome retry.
-- `prototype/inline-card.ts`: minimal native inline renderer preparation, not yet a live UI trial.
-- `scripts/prepare-gate-c.ts`: prepares dedicated native session files without model calls. See the Gate C plan before using them.
+Do not change normal installations or publish this candidate without owner approval. After release, the reproducible package source is `npm:pi-comms@0.1.0` **only if that version has actually been published**; it is not currently an available-install claim.
 
-## Deliberately absent
+## First run
 
-No production broker build, package manifest for Pi loading, database, membership framework, blind retry, UI monkey-patch, orchestration system, release or rollout. Dedicated live-model trajectories are recorded separately in the delivery report; `npm test` never launches them. The fixture batch size of two is for testing overflow, **not product tuning**. Passing fixtures do not establish real human or model usability.
+1. In each participating Pi session, run `/comms approve`.
+2. Select the exact colleague. Names are labels; the UI also shows the native session ID.
+3. Describe the collaboration and confirm. Declining/cancelling records no approval.
+4. Ask your agent to communicate. No human ID relay or per-message confirmation is required for that collaboration.
 
-The lockfile retains the requested Pi 1.4.0 baseline. `npm audit` reports an inherited high-severity `undici` advisory; see the report. Do not treat this private test package as ready for deployment.
+Each recipient follows its own user mandate. Unapproved traffic stays human-visible in `/comms inspect`, but cannot wake the model or grant approval. For standalone bidirectional work, approve the colleague on both sides. Peer messages cannot broaden approval or bypass host tool permissions. Same-account IPC and prompt attribution are not a security sandbox.
+
+## Everyday commands
+
+- `/comms` or `/comms status`: approval/context, waiting count, hold reason and reset limitations.
+- `/comms approve [exact-session-id]`: human selection/context/confirmation.
+- `/comms revoke [exact-session-id]`: remove contact approval after confirmation; queued traffic remains held.
+- `/comms pause`: keep buffering arrivals without peer admission/wakes.
+- `/comms resume`: resume eligible intake.
+- `/comms inspect [message-id]`: inspect waiting content or a specific message without consuming/admitting it.
+
+**Stop ends the current run. A queued or later peer message can wake it again. Pause holds incoming peer admission/wakes until Resume.** Pause does not stop existing work or retract admitted content. Stop/corrections do not roll back effects already performed.
+
+Native inline cards show counterpart, subject, batch and receipt; Ctrl+O expands full content and technical details. The footer shows waiting/paused/hold state. Already-pending native input and checked editor drafts win at admission. Input after posting may follow the batch. There is no universal arbitrary-modal detector. Use Pause when you want reception held.
+
+## Agent tools
+
+- `comms_peers({})`: known approved colleagues first, with context/reason. `view: "all"` discovers others without contacting them.
+- `comms_message({to, subject, text, refs?, corrects?})`: start an exact-session exchange.
+- `comms_message({respondTo, text, refs?, corrects?})`: answer the explicit return handle after turns/tools; no blocking ask.
+- `comms_inspect({message})`, `({exchange,cursor?})`, `({queue:"self",cursor?})`, `({outbox:"self",cursor?})`: non-consuming runtime evidence. Not a polling duty.
+
+Schemas reject unknown fields and ambiguous destinations. Native UUIDs only, no name/prefix routing. Corrections reference the sender's prior message to the same peer. References are pointers, never uploads. Messages over 900,000 serialized bytes reject with a reference-based next step. Inspection pages retain full items and return a cursor. Multiple replies are allowed, not owed.
+
+Same-ID reconnect refresh is internal: after a definite stale-epoch rejection, re-resolve only that same native ID once and recheck approval. Unknown send outcome never automatically retries. Concurrent active claims are rejected explicitly. A fork/new session has a different identity.
+
+## Facts and volatile state
+
+- **Accepted:** broker/socket transport accepted it. Not proof the recipient model saw it.
+- **Queued:** receiver memory holds it.
+- **Posted:** handed to native Pi.
+- **Saved:** a native session entry was actually observed locally.
+- **Response:** a linked peer message exists. None of these means work completed.
+
+No crash durability. Approvals, buffers, message/outbox records and return handles reset on reload, session switch or process restart. Resuming the same saved session preserves its native address, not lost runtime linkage/approval. Renew approval; report context lost/unknown instead of inventing recovery. The broker retains legacy best-effort mailbox behavior internally, but the public exact-send path rejects unavailable peers instead of promising offline delivery.
+
+## Update and rollback
+
+Pause and finish/inspect outstanding work before replacing the package. Record useful work products outside the transport. Exit participating sessions, replace the reviewed artifact, then restart and renew contacts. Rollback uses the previously retained artifact in the same way. Buffers/linkage may be lost in either direction. There is no durable schema migration or guaranteed replay. Do not blindly repeat uncertain sends after restart.
+
+## Verification
+
+```sh
+npm run test:base          # compiled production path + native scripted-provider integration, no paid calls
+npm test                  # Base and historical spike regressions; no paid calls
+npm run prepare:fixture   # downloads pinned MIT upstream into ignored .scratch/upstream
+npm run test:original     # original regressions in isolated temporary runtime
+npm run check
+```
+
+Packaged-artifact installation is tested in a temporary prefix/agent directory, never a normal installation. Dependency advisory assessment, exact evidence and the outstanding **real-person walkthrough** are in [BASE-3.md](docs/BASE-3.md). Automated TUI/scripted-provider tests are not human usability validation.

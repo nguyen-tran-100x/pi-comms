@@ -1,0 +1,105 @@
+import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { MessageInput, EnvelopeSchema, checkSize, validate, type Envelope, type InspectInput } from './schema.ts';
+import type { Attempt } from './session-send.ts';
+
+export type Fact = { kind: 'accepted' | 'queued' | 'posted' | 'saved' | 'rejected'; at: string; source: string; evidenceRef?: string };
+export type Message = Envelope & { from: string; to: string };
+export type Entry = { message: Message; facts: Fact[]; state: Attempt['outcome']; code?: string; returnHandle?: string; linkage?: 'context-lost' };
+export type Approval = { id: string; name: string; context: string };
+export class Runtime {
+  private approvals = new Map<string, Approval>();
+  private records = new Map<string, Entry>();
+  private returns = new Map<string, Message>();
+  waiting: string[] = [];
+  paused = false;
+  constructor(readonly self: string, private transport: (id: string, envelope: Envelope) => Promise<Attempt>) {}
+  // Passed only to the human command handler, never registered as an agent tool.
+  approveFromOwner(peer: Approval) { this.approvals.set(peer.id, { ...peer }); }
+  revokeFromOwner(id: string) { this.approvals.delete(id); }
+  isApproved = (id: string) => this.approvals.has(id);
+  known() { return [...this.approvals.values()].map(p => ({ ...p })); }
+  entry(id: string) { return this.records.get(id); }
+  fact(id: string, kind: Fact['kind'], source: string, evidenceRef?: string) {
+    const entry = this.records.get(id);
+    if (entry && !entry.facts.some(f => f.kind === kind && f.evidenceRef === evidenceRef)) entry.facts.push({ kind, at: new Date().toISOString(), source, ...(evidenceRef ? { evidenceRef } : {}) });
+  }
+  async send(input: MessageInput) {
+    validate(MessageInput, input);
+    const source = 'respondTo' in input ? this.returns.get(input.respondTo) : undefined;
+    if ('respondTo' in input && !source) throw new Error('CONTEXT_LOST');
+    const to = source?.from ?? ('to' in input ? input.to : '');
+    if (!this.isApproved(to)) throw new Error('CONTACT_NOT_APPROVED');
+    const correction = input.corrects ? this.records.get(input.corrects)?.message : undefined;
+    if (input.corrects && (!correction || correction.from !== this.self || correction.to !== to)) throw new Error('INVALID_INPUT: correction must reference your message to this exact peer');
+    const envelope: Envelope = { id: randomUUID(), exchange: source?.exchange ?? randomUUID(), subject: source?.subject ?? ('subject' in input ? input.subject : ''), text: input.text, refs: input.refs ?? [], replyTo: source?.id ?? null, corrects: input.corrects ?? null, createdAt: new Date().toISOString() };
+    checkSize(envelope);
+    const entry: Entry = { message: { ...envelope, from: this.self, to }, facts: [], state: 'unknown' };
+    this.records.set(envelope.id, entry);
+    let outcome: Attempt;
+    try { outcome = await this.transport(to, envelope); } catch { outcome = { outcome: 'unknown', code: 'OUTCOME_UNKNOWN' }; }
+    entry.state = outcome.outcome; entry.code = outcome.code;
+    if (outcome.outcome !== 'unknown') this.fact(envelope.id, outcome.outcome === 'accepted' ? 'accepted' : 'rejected', 'broker');
+    return this.view(entry);
+  }
+  receive(from: string, envelope: Envelope) {
+    validate(EnvelopeSchema, envelope); checkSize(envelope);
+    const message: Message = { ...structuredClone(envelope), from, to: this.self };
+    const previous = this.records.get(envelope.id);
+    if (previous) {
+      if (!isDeepStrictEqual(previous.message, message)) throw new Error('INVALID_INPUT: conflicting message ID');
+      return false;
+    }
+    let contextLost = false;
+    if (envelope.replyTo) {
+      const source = this.records.get(envelope.replyTo)?.message;
+      if (!source) contextLost = true;
+      else if (source.from !== this.self || source.to !== from || source.exchange !== envelope.exchange) throw new Error('INVALID_INPUT: invalid reply linkage');
+    }
+    if (envelope.corrects) {
+      const source = this.records.get(envelope.corrects)?.message;
+      if (!source || source.from !== from || source.to !== this.self) throw new Error('INVALID_INPUT: invalid correction linkage');
+    }
+    const handle = randomUUID();
+    this.returns.set(handle, message);
+    this.records.set(envelope.id, { message, facts: [], state: 'accepted', returnHandle: handle, ...(contextLost ? { linkage: 'context-lost' } : {}) });
+    this.fact(envelope.id, 'queued', 'receiver runtime');
+    // Unapproved messages are visible to the human, but cannot wake or enter model context.
+    this.waiting.push(envelope.id);
+    return true;
+  }
+  eligible() { return this.waiting.filter(id => this.isApproved(this.records.get(id)!.message.from)); }
+  posted(ids: string[]) {
+    const posted = new Set(ids);
+    this.waiting = this.waiting.filter(id => !posted.has(id));
+    ids.forEach(id => this.fact(id, 'posted', 'native Pi sendMessage'));
+  }
+  view(entry: Entry) {
+    return structuredClone({ ...entry, responses: [...this.records.values()].filter(r => r.message.replyTo === entry.message.id).map(r => r.message.id), evidence: 'available' });
+  }
+  page(entries: Entry[], cursor?: string) {
+    const start = cursor ? entries.findIndex(e => e.message.id === cursor) + 1 : 0;
+    if (cursor && start === 0) throw new Error('CONTEXT_LOST: cursor no longer available');
+    const items: ReturnType<Runtime['view']>[] = [];
+    let bytes = 0;
+    for (const entry of entries.slice(start)) {
+      const view = this.view(entry); const size = Buffer.byteLength(JSON.stringify(view));
+      if (items.length && bytes + size > MAX_PAGE_BYTES) break;
+      items.push(view); bytes += size;
+      if (items.length === 30) break;
+    }
+    return { items, nextCursor: start + items.length < entries.length ? items.at(-1)!.message.id : null };
+  }
+  inspect(input: InspectInput) {
+    if ('message' in input) {
+      const entry = this.records.get(input.message);
+      if (!entry) throw new Error('CONTEXT_LOST');
+      return this.view(entry);
+    }
+    const records = [...this.records.values()];
+    const selected = 'queue' in input ? this.waiting.map(id => this.records.get(id)!) : 'outbox' in input ? records.filter(e => e.message.from === this.self) : records.filter(e => e.message.exchange === input.exchange);
+    if ('exchange' in input && !selected.length) throw new Error('CONTEXT_LOST');
+    return this.page(selected, input.cursor);
+  }
+}
+export const MAX_PAGE_BYTES = 900_000;

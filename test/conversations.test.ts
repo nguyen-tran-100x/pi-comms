@@ -15,9 +15,9 @@ test('unapproved traffic cannot grant contact, recruit, or reroute to similar or
   r.approveFromOwner(b);
   await r.send({ to: b, subject: 'task', text: 'hello' });
   await assert.rejects(r.send({ to: c, subject: 'recruit', text: 'join' }), /CONTACT_NOT_APPROVED/);
-  await assert.rejects(r.send({ to: { ...b, epoch: 'replacement' }, subject: 'task', text: 'hello' }), /CONTACT_NOT_APPROVED/);
-  assert.throws(() => r.receive(b, { ...a, epoch: 'new-session' }, unsolicited), /STALE_HANDLE/);
-  assert.equal(deliveries, 1);
+  await r.send({ to: { ...b, epoch: 'replacement' }, subject: 'task', text: 'same native session' });
+  assert.throws(() => r.receive(b, { id: 'different-native-session' }, unsolicited), /STALE_HANDLE/);
+  assert.equal(deliveries, 2);
 });
 
 test('late replies, overlaps, clarification and correction keep exact runtime linkage without ask state', async () => {
@@ -32,7 +32,7 @@ test('late replies, overlaps, clarification and correction keep exact runtime li
   for (let turn = 0; turn < 5; turn++) { await Promise.resolve(); receiver.intake(1); }
   const answer = await receiver.send({ respondTo: firstReturn, text: 'finding' });
   assert.equal(answer.replyTo, first.id); assert.equal(answer.exchange, first.exchange);
-  assert.deepEqual(answer.to, a);
+  assert.deepEqual(answer.to, { id: a.id });
   const clarify = sender.receive(b, a, answer)!;
   const question = await sender.send({ respondTo: clarify, text: 'which line?' });
   const questionReturn = receiver.receive(a, b, question)!;

@@ -14,6 +14,7 @@ for (const key of ['PI_INTERCOM_SCOPE_ID', 'PI_INTERCOM_SESSION_ID', 'PI_SUBAGEN
 const { IntercomClient } = await import('../.scratch/upstream/broker/client.ts');
 const { conversations } = await import('../prototype/conversations.ts');
 const { exactWire } = await import('./exact-wire.ts');
+const { sendToSession } = await import('../prototype/session-send.ts');
 
 async function waitFor(predicate: () => boolean) {
   const deadline = Date.now() + 5000;
@@ -56,7 +57,7 @@ test('real isolated original broker: addressed send, dedupe, native ordinary-rep
     const a = endpoint('exact-sender'), b = endpoint('exact-receiver');
     const tx = (client: InstanceType<typeof IntercomClient>) => async (to: typeof a, envelope: any) => {
       const live = (await client.listSessions()).find(s => s.id === to.id);
-      if (!live || live.endpointEpoch !== to.epoch) return 'rejected' as const;
+      if (!live || (to.epoch && live.endpointEpoch !== to.epoch)) return 'rejected' as const;
       // Runtime linkage is in the envelope; native replyTo is ask-only and deliberately omitted.
       const result = await client.send(to.id, { text: JSON.stringify(envelope), messageId: envelope.id });
       return result.delivered ? 'accepted' as const : result.outcomeKnown ? 'rejected' as const : 'unknown' as const;
@@ -91,6 +92,35 @@ test('real isolated original broker: addressed send, dedupe, native ordinary-rep
       assert.equal(await wire.send({ id: rebound.id, epoch: rebound.endpointEpoch! }, { ...request, id: 'fresh-on-wire' }), 'accepted');
       await waitFor(() => recovered.length === 1);
       assert.equal(recovered[0].message.id, 'fresh-on-wire');
+      // New evidence: saved native session UUID survives receiver reconnect; epoch is internal.
+      const { SessionManager } = await import('@earendil-works/pi-coding-agent');
+      const manager = SessionManager.create(home, path.join(home, 'native-sessions'));
+      manager.appendMessage((await import('@earendil-works/pi-ai')).fauxAssistantMessage('saved fixture session'));
+      const nativeId = manager.getSessionId();
+      const resumedId = SessionManager.open(manager.getSessionFile()!).getSessionId();
+      assert.equal(resumedId, nativeId);
+      let nativeReceiver = await connect('reviewer', nativeId); clients.push(nativeReceiver);
+      const oldConnection = (await newSender.listSessions()).find(s => s.id === nativeId)!;
+      await nativeReceiver.disconnect();
+      nativeReceiver = await connect('reviewer', resumedId); clients.push(nativeReceiver);
+      const actual: any[] = []; nativeReceiver.on('message', (_from, message) => actual.push(message));
+      let resolves = 0;
+      const retryEnvelope = { ...request, id: 'same-id-refresh' };
+      const refreshed = await sendToSession(nativeId, retryEnvelope, id => id === nativeId, async id => {
+        resolves++;
+        if (resolves === 1) return { id, epoch: oldConnection.endpointEpoch! };
+        const current = (await newSender.listSessions()).find(s => s.id === id);
+        return current ? { id: current.id, epoch: current.endpointEpoch! } : null;
+      }, (connection, envelope) => wire.attempt(connection, envelope));
+      assert.equal(refreshed.outcome, 'accepted'); assert.equal(resolves, 2);
+      await waitFor(() => actual.length === 1); assert.equal(actual[0].id, retryEnvelope.id);
+      // A separate owned OS process claiming the live native ID gets an explicit conflict.
+      const contender = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+      const duplicate = new IntercomClient(); duplicate.on('error', () => undefined);
+      try {
+        await assert.rejects(duplicate.connect({ name: 'reviewer', cwd: home, model: 'fixture', pid: contender.pid!, startedAt: Date.now(), lastActivity: Date.now() }, nativeId), (error: any) => error.code === 'E_SESSION_HELD');
+      } finally { await duplicate.disconnect(); await stop(contender); }
+      assert.equal((await newSender.listSessions()).filter(s => s.id === nativeId).length, 1);
     } finally { wire.close(); }
     const stale = await newSender.send('absent-exact-id', { text: 'never use similar name' });
     assert.equal(stale.delivered, false); assert.equal(wrong.length, 0);

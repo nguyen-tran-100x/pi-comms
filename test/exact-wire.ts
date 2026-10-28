@@ -20,14 +20,15 @@ export async function exactWire(id: string) {
   writeMessage(socket, { type: 'register', sessionId: id, session: { name: id, cwd: process.cwd(), model: 'fixture', pid: process.pid, startedAt: Date.now(), lastActivity: Date.now() } });
   await connected;
   return {
-    async send(to: Endpoint, envelope: Envelope): Promise<'accepted' | 'rejected' | 'unknown'> {
+    async attempt(to: Endpoint, envelope: Envelope): Promise<import('../prototype/session-send.ts').Attempt> {
       return new Promise(resolve => {
-        const timer = setTimeout(() => { pending.delete(envelope.id); resolve('unknown'); }, 2000);
-        pending.set(envelope.id, response => { clearTimeout(timer); resolve(response.type === 'delivered' ? 'accepted' : response.outcomeKnown ? 'rejected' : 'unknown'); });
+        const timer = setTimeout(() => { pending.delete(envelope.id); resolve({ outcome: 'unknown' }); }, 2000);
+        pending.set(envelope.id, response => { clearTimeout(timer); resolve({ outcome: response.type === 'delivered' ? 'accepted' : response.outcomeKnown ? 'rejected' : 'unknown', code: response.code }); });
         writeMessage(socket, { type: 'send', to: to.id, targetId: to.id, targetEpoch: to.epoch,
           message: { id: envelope.id ?? randomUUID(), timestamp: Date.now(), content: { text: JSON.stringify(envelope) } } });
       });
     },
+    async send(to: Endpoint, envelope: Envelope) { return (await this.attempt(to, envelope)).outcome; },
     close: () => socket.destroy(),
   };
 }

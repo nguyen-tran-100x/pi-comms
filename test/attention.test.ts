@@ -196,3 +196,39 @@ test('ordinary handback survives multiple real Pi model turns and tool calls wit
     assert.equal(f.session.messages.filter(m => m.role === 'assistant').length, 4);
   } finally { await f.close(); }
 });
+
+
+test('Stop ends the current run but does not pause a later peer wake', async () => {
+  const f = await fixture();
+  try {
+    const run = f.session.prompt('current human work'); await f.wait(1);
+    const stopped = f.session.abort(); f.release(); await stopped; await run;
+    assert.equal(f.session.isIdle, true); assert.equal(f.adapter.isPaused(), false);
+    f.adapter.receive('later-peer', 'new request after Stop'); f.adapter.pump();
+    await f.wait(2); assert.match(text(f.inputs[1]), /new request after Stop/);
+    f.release(); await f.session.waitForIdle();
+  } finally { await f.close(); }
+});
+
+test('Pause keeps receiving, does not stop work or retract admitted content, and Resume drains once', async () => {
+  const f = await fixture();
+  try {
+    f.adapter.receive('admitted', 'already posted'); f.adapter.pump(); await f.wait(1);
+    f.adapter.pause(true);
+    f.adapter.receive('held-a', 'while paused A'); f.adapter.receive('held-b', 'while paused B');
+    f.adapter.pump();
+    assert.equal(f.session.isIdle, false, 'Pause did not abort existing work');
+    assert.deepEqual(f.adapter.posted, [['admitted']]);
+    assert.match(text(f.inputs[0]), /already posted/);
+    f.release(); await f.session.waitForIdle();
+    f.adapter.pump(); assert.equal(f.inputs.length, 1, 'paused intake causes no idle wake');
+    assert.deepEqual(f.adapter.queued(), ['held-a', 'held-b']);
+    const human = f.session.prompt('human work is still allowed'); await f.wait(2);
+    f.adapter.pump(); f.release(); await human;
+    assert.deepEqual(f.adapter.posted, [['admitted']], 'successful turn while paused does not admit peers');
+    f.adapter.pause(false); f.adapter.pump(); await f.wait(3);
+    assert.deepEqual(f.adapter.posted, [['admitted'], ['held-a', 'held-b']]);
+    f.adapter.pump(); f.release(); await f.session.waitForIdle();
+    assert.equal(f.inputs.length, 3); assert.deepEqual(f.adapter.queued(), []);
+  } finally { await f.close(); }
+});

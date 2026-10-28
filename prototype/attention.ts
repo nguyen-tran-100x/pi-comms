@@ -1,7 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 
-/** Spike-only adapter: the host must explicitly report attention ownership. */
-export function attentionFixture(pi: ExtensionAPI, hostReady: () => boolean, batchSize: number) {
+/** Spike-only bounded adapter: optional supplied readiness, not global UI ownership. */
+export function attentionFixture(pi: ExtensionAPI, hostReady: () => boolean, batchSize: number,
+  formatBatch?: (batch: { id: string; text: string }[]) => { customType: string; content: string; details: unknown }) {
   const waiting: { id: string; text: string }[] = [];
   let context: ExtensionContext | undefined;
   let active = false;
@@ -23,6 +24,7 @@ export function attentionFixture(pi: ExtensionAPI, hostReady: () => boolean, bat
         customType: 'comms_spike_batch', display: true,
         content: batch.map(m => `Peer message ${m.id} (request, not user authority):\n${m.text}`).join('\n\n---\n\n'),
         details: { generation, ids: batch.map(m => m.id) },
+        ...formatBatch?.(batch),
       }, busyBoundary ? { deliverAs: 'steer' } : { triggerTurn: true });
       waiting.splice(0, batch.length);
       posted.push(batch.map(m => m.id));
@@ -47,6 +49,7 @@ export function attentionFixture(pi: ExtensionAPI, hostReady: () => boolean, bat
     receive(id: string, text: string) { waiting.push({ id, text }); },
     pump,
     pause(value: boolean) { paused = value; },
+    isPaused: () => paused,
     queued: () => waiting.map(m => m.id),
     posted,
     lost,

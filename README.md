@@ -2,7 +2,9 @@
 
 **This is evidence for [Spike #2](https://github.com/tranhoangnguyen03/pi-comms/issues/2), not the base implementation or a loadable Pi extension.** It does not register `/comms`, publish tools, launch real agents, or install a broker into your normal runtime.
 
-Read [the Gate A/B report](docs/SPIKE-2-REPORT.md) for results, limits and decisions. The governing proposal remains [blueprint #1](https://github.com/tranhoangnguyen03/pi-comms/issues/1). Base work is tracked separately in [#3](https://github.com/tranhoangnguyen03/pi-comms/issues/3).
+**Latest result:** [Gate C delivery report](docs/GATE-C-DELIVERY.md) — three live behavior trials completed, 20 model requests; UI validation is automated, not a human study.
+
+Read [the historical Gate A/B report](docs/SPIKE-2-REPORT.md), [the revised identity/Stop-Pause follow-up](docs/SPIKE-2-FOLLOWUP.md), and [the concrete Gate C approval plan](docs/GATE-C-PLAN.md) for results, limits and decisions. The governing proposal remains [blueprint #1](https://github.com/tranhoangnguyen03/pi-comms/issues/1). Base work is tracked separately in [#3](https://github.com/tranhoangnguyen03/pi-comms/issues/3).
 
 ## Reproduce
 
@@ -22,13 +24,16 @@ The original tests use owned temporary homes and brokers. New tests use real in-
 ## Files
 
 - `prototype/attention.ts`: FIFO snapshot posting at eligible busy/idle boundaries. Host readiness is **explicit fixture instrumentation**, not a universal modal detector. Idle pumping is explicit, not a production timer.
-- `prototype/conversations.ts`: volatile exact peer approval and return handles. Approval is an owner-side function, never an agent tool. Inputs are typed fixtures, not a validated public protocol.
+- `prototype/conversations.ts`: volatile native-session-ID approval and return handles. Approval is an owner-side function, never an agent tool. Inputs are typed fixtures, not a validated public protocol.
 - `test/attention.test.ts`: native Pi turn/queue/history/permission/compaction tests and a scripted multi-turn handback.
 - `test/conversations.test.ts`: overlaps, corrections, approvals, queue order, outbox and runtime loss.
-- `test/transport.test.ts`, `test/exact-wire.ts`: real original broker behavior and frozen id+epoch protocol probes.
+- `test/transport.test.ts`, `test/exact-wire.ts`: real original broker behavior, frozen id+epoch probes, same-native-ID refresh and explicit duplicate claims.
+- `prototype/session-send.ts`: one bounded same-ID refresh after definite rejection; never unknown-outcome retry.
+- `prototype/inline-card.ts`: minimal native inline renderer preparation, not yet a live UI trial.
+- `scripts/prepare-gate-c.ts`: prepares dedicated native session files without model calls. See the Gate C plan before using them.
 
 ## Deliberately absent
 
-No production broker build, package manifest for Pi loading, database, membership framework, automatic retry, UI monkey-patch, orchestration system, live-model trajectory, release or rollout. The fixture batch size of two is for testing overflow, **not product tuning**. Passing fixtures do not establish real human or model usability.
+No production broker build, package manifest for Pi loading, database, membership framework, blind retry, UI monkey-patch, orchestration system, release or rollout. Dedicated live-model trajectories are recorded separately in the delivery report; `npm test` never launches them. The fixture batch size of two is for testing overflow, **not product tuning**. Passing fixtures do not establish real human or model usability.
 
 The lockfile retains the requested Pi 1.4.0 baseline. `npm audit` reports an inherited high-severity `undici` advisory; see the report. Do not treat this private test package as ready for deployment.

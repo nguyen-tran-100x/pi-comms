@@ -1,0 +1,52 @@
+{
+  "name": "pi-comms",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "keywords": [
+    "pi-package"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "pi": {
+    "extensions": [
+      "./dist/extension.js"
+    ]
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md",
+    "docs/BASE-3.md"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "type": "module",
+  "description": "User-approved, exact-session Pi communication with human-first batching",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "verify": "npm run prepare:fixture && npm run build && npm run check && npm test && npm run test:original && npm run test:artifact",
+    "check": "tsc --noEmit --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --allowImportingTsExtensions src/extension.ts",
+    "test:artifact": "node scripts/test-artifact.mjs",
+    "prepack": "npm run build",
+    "test:base": "npm run build && node --import tsx --test --test-concurrency=1 test/base-*.test.ts",
+    "prepare:fixture": "node scripts/prepare-upstream.mjs",
+    "test": "node --import tsx --test --test-concurrency=1 test/*.test.ts",
+    "test:original": "cd .scratch/upstream && node --import tsx --test human-priority.pi.test.ts reply-tracker.test.ts"
+  },
+  "overrides": { "undici": "8.12.2" },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-tui": "1.4.0",
+    "esbuild": "0.25.12",
+    "tsx": "4.20.6",
+    "typebox": "1.0.62",
+    "typescript": "5.9.3"
+  }
+}

@@ -247,9 +247,23 @@ test('installed Base model tools: private inspection boundary and discover → s
         const batch = context.messages.filter((m: any) => text([m]).includes('Model tool review') && text([m]).includes('return handle')).at(-1);
         assert.ok(batch, 'request context supplies return handle');
         const handle = text([batch]).match(/return handle ([0-9a-f-]{36})/)![1];
+        return call('comms_message', { respondTo: handle, subject: 'Invalid extra reply subject', text: 'MODEL_FINDINGS: exact identity and volatile state verified.' });
+      },
+      context => {
+        const failed = b!.events.find(e => e.type === 'tool_execution_end' && e.toolName === 'comms_message' && e.isError);
+        assert.ok(failed, 'native argument validation rejects before extension execution');
+        assert.match(text([failed.result]), /Validation failed for tool "comms_message"/);
+        assert.match(text(context.messages), /subject: schema is false/);
+        const renderer = b!.runtime.session.extensionRunner!.getToolDefinition('comms_message')!.renderResult!;
+        const rendered = renderer(failed.result, { expanded: false, isPartial: false }, { fg: (_key: string, value: string) => value } as any, {} as any).render(100).join('\n');
+        assert.match(rendered, /Validation failed/); assert.match(rendered, /subject/);
+        assert.doesNotMatch(rendered, /Communication failed/);
+        const batch = context.messages.filter((m: any) => m.role === 'user' && text([m]).includes('Model tool review') && text([m]).includes('return handle')).at(-1);
+        const handle = text([batch]).match(/return handle ([0-9a-f-]{36})/)![1];
         return call('comms_message', { respondTo: handle, text: 'MODEL_FINDINGS: exact identity and volatile state verified.' });
       },
       context => { assert.equal(lastResult(context, 'comms_message').ok, true); return fauxAssistantMessage('Review returned.'); },
+
     ]);
     a.responses([
       call('comms_peers', {}),
@@ -262,8 +276,9 @@ test('installed Base model tools: private inspection boundary and discover → s
     const aTools = a.events.filter(e => e.type === 'tool_execution_end').map(e => e.toolName);
     const bTools = b.events.filter(e => e.type === 'tool_execution_end').map(e => e.toolName);
     assert.deepEqual(aTools, ['comms_peers', 'comms_message']);
-    assert.deepEqual(bTools, ['comms_inspect', 'comms_inspect', 'comms_inspect', 'read', 'read', 'comms_message']);
-    assert.ok(b.events.filter(e => e.type === 'tool_execution_end').every(e => !e.isError));
+    assert.deepEqual(bTools, ['comms_inspect', 'comms_inspect', 'comms_inspect', 'read', 'read', 'comms_message', 'comms_message']);
+    assert.equal(b.events.filter(e => e.type === 'tool_execution_end' && e.isError).length, 1);
+    assert.equal(data(await b.tool('comms_inspect', { outbox: 'self' })).data.items.length, 1, 'invalid reply created no send record; valid correction sent once');
     const sent = data(await a.tool('comms_inspect', { outbox: 'self' })).data.items.find((e: any) => e.message.subject === 'Model tool review');
     assert.equal(sent.responses.length, 1);
     const reply = data(await a.tool('comms_inspect', { message: sent.responses[0] })).data;

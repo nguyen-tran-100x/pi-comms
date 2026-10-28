@@ -52,6 +52,14 @@ Four new native integration scenarios (also rerun from the installed artifact) c
 
 These are deterministic execution/interaction tests, not a claim that an unfamiliar model or the owner has accepted the revised UX. No paid trials repeated. Real-use acceptance is still pending.
 
+## Native error visibility repair after live reply feedback
+
+Real use exposed another presentation defect: a reply included `subject` alongside `respondTo` and `text`. Native Pi correctly rejected the extra field before extension execution, but its error result had no pi-comms details. The custom renderer replaced that useful validation explanation with a generic failure label. The subsequent correctly shaped reply succeeded; native receiver history contains it. This does not establish broad agent reliability or completed human acceptance.
+
+The renderer now preserves native textual results when extension-specific details are absent, including native validation/permission errors. The tool description explicitly says replies inherit the original subject and must omit `to` and `subject`. Strict validation remains intact; no fields are silently discarded and no unknown send is retried.
+
+The installed-artifact model/tool scenario now deliberately submits a reply with the extra subject, asserts the actual native error reaches the subsequent provider request **and the collapsed human renderer**, then submits the corrected reply. It checks two tool attempts, one native pre-execution error, one outbox record and one correctly linked response. No live-model retry was launched by this repair.
+
 ## Review corrections after d1491d1
 
 - Reproduced the confirmed unapproved-inspection leak with a failing regression before the fix. Model-facing projections now expose only routing IDs and `CONTACT_NOT_APPROVED` metadata for unapproved incoming records, withholding subject/body/references/return handles across queue, message and exchange views, including after revocation. `/comms inspect` explicitly selects the complete human projection.

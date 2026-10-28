@@ -43,7 +43,7 @@ Unapproved content remains fully human-visible in `/comms inspect`; model inspec
 ## Everyday commands
 
 - `/comms` or `/comms status`: approval/context, waiting count, hold reason and reset limitations.
-- `/comms requests`: review/reconsider held incoming contact requests.
+- `/comms requests`: review/reconsider held incoming contact requests, including queued messages from a contact you revoked.
 - `/comms approve [exact-session-id]`: optional explicit contact setup/change through human selection/context/confirmation.
 - `/comms revoke [exact-session-id]`: remove contact approval after confirmation; queued traffic remains held.
 - `/comms pause`: keep buffering arrivals without peer admission/wakes.
@@ -63,7 +63,7 @@ Native inline cards show counterpart, subject, batch and receipt; Ctrl+O expands
 
 Schemas reject unknown fields and ambiguous destinations. Native UUIDs only, no name/prefix routing. Corrections reference the sender's prior message to the same peer. References are pointers, never uploads. Messages over 900,000 serialized bytes reject with a reference-based next step. Inspection pages retain full approved items and return a cursor. `localTransport.connectivity` describes this session's broker connection, not the counterpart's presence; use `comms_peers` for exact colleague presence. Multiple replies are allowed, not owed.
 
-Same-ID reconnect refresh is internal: after a definite stale-epoch rejection, re-resolve only that same native ID once and recheck approval. Unknown send outcome never automatically retries. Concurrent active claims are rejected explicitly. A fork/new session has a different identity.
+Same-ID reconnect refresh is internal: after a definite stale-epoch rejection, re-resolve only that same native ID once and recheck approval. Unknown send outcome never automatically retries. Concurrent active claims are rejected explicitly. A fork/new session has a different identity. Renaming a session updates discovery and contact labels without changing its native ID or approval binding; clearing its name restores the UUID display fallback.
 
 ## Facts and volatile state
 

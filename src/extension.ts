@@ -36,7 +36,7 @@ export default function comms(pi: ExtensionAPI) {
   let nextReconnect = 0;
   let reconnectDelay = 1000;
   const declined = new Set<string>();
-  const incoming = new Map<string, { name: string; subject: string; text: string }>();
+  const peerNames = new Map<string, string>();
   const prompted = new Set<string>();
   const approvalsInFlight = new Map<string, Promise<void>>();
   const lifetime = new AbortController();
@@ -65,16 +65,24 @@ export default function comms(pi: ExtensionAPI) {
         if (!allowed) { if (direction === 'send') declined.add(id); throw new Error('CONTACT_NOT_APPROVED'); }
         declined.delete(id);
         current.approveFromOwner({ id, name: label, context: direction === 'receive' ? `User accepted incoming request: ${work} (peer-supplied title; user directives remain controlling)` : work });
-        incoming.delete(id);
         context.ui.notify(`Collaboration with ${label} approved for: ${work}. ${direction === 'send' ? 'Continuing the send.' : 'Held messages will enter at the next eligible boundary.'}`, 'info');
       } finally { approvalDialog = false; status(); }
     })();
     approvalsInFlight.set(id, operation);
     try { await operation; } finally { approvalsInFlight.delete(id); }
   }
+  function contactRequests() {
+    const requests = new Map<string, { name: string; subject: string; text: string }>();
+    if (!runtime) return [...requests.entries()];
+    for (const id of runtime.waiting) {
+      const message = runtime.entry(id)!.message;
+      if (!runtime.isApproved(message.from) && !requests.has(message.from)) requests.set(message.from, { name: name(message.from), subject: message.subject, text: message.text });
+    }
+    return [...requests.entries()];
+  }
   function offerIncoming() {
     if (!ctx?.hasUI || !runtime || approvalDialog || runtime.paused || !ctx.isIdle() || ctx.hasPendingMessages() || ctx.ui.getEditorText().length) return;
-    const request = [...incoming.entries()].find(([id]) => !runtime!.isApproved(id) && !prompted.has(id));
+    const request = contactRequests().find(([id]) => !prompted.has(id));
     if (!request) return;
     const [id, peer] = request; prompted.add(id);
     void approveContact(id, peer.name, peer.subject, peer.text, 'receive').catch(error => {
@@ -95,7 +103,7 @@ export default function comms(pi: ExtensionAPI) {
     const line = `${runtime.paused ? 'Paused' : 'Receiving'} · ${runtime.waiting.length} waiting${unapproved ? ` (${unapproved} unapproved)` : ''} · ${connectionError ?? hold() ?? 'ready'}`;
     if (line !== lastStatus) { ctx.ui.setStatus('comms', line); lastStatus = line; }
   }
-  function name(id: string) { return id === runtime?.self ? ctx?.sessionManager.getSessionName() ?? 'You' : runtime?.known().find(p => p.id === id)?.name ?? id; }
+  function name(id: string) { return id === runtime?.self ? ctx?.sessionManager.getSessionName() ?? 'You' : peerNames.get(id) ?? runtime?.known().find(p => p.id === id)?.name ?? id; }
   function card(entry: Entry): CardMessage {
     const m = entry.message;
     const kinds = entry.facts.map(f => f.kind);
@@ -131,6 +139,7 @@ export default function comms(pi: ExtensionAPI) {
       const candidate = new IntercomClient();
       candidate.on('error', () => undefined);
       candidate.on('disconnected', () => { if (client === candidate) { connectionError = 'offline; reconnecting'; nextReconnect = Date.now() + 1000; status(); } });
+      candidate.on('presence_update', (peer: SessionInfo) => { if (runtime === current && !stopped) peerNames.set(peer.id, peer.name ?? peer.id); });
       candidate.on('message', (from: SessionInfo, wire: WireMessage) => {
         if (runtime !== current || stopped) return;
         try {
@@ -138,8 +147,8 @@ export default function comms(pi: ExtensionAPI) {
           validate(EnvelopeSchema, envelope);
           if (envelope.id !== wire.id) throw new Error('INVALID_INPUT: envelope ID mismatch');
           const fresh = current.receive(from.id, envelope);
+          peerNames.set(from.id, from.name ?? from.id);
           if (fresh && !current.isApproved(from.id)) {
-            if (!incoming.has(from.id)) incoming.set(from.id, { name: from.name ?? from.id, subject: envelope.subject, text: envelope.text });
             context.ui.notify(`Contact request from ${from.name ?? from.id}: ${envelope.subject}. Held for you, not the agent. Approval appears when idle; /comms requests to review.`, 'info');
           }
           candidate.sendMessageReceipt({ messageId: wire.id, status: 'queued', timestamp: Date.now() });
@@ -149,7 +158,8 @@ export default function comms(pi: ExtensionAPI) {
       try {
         await connect(current.self, { name: context.sessionManager.getSessionName() ?? current.self, cwd: context.cwd, model: context.model?.id ?? 'unknown', pid: process.pid, startedAt: Date.now(), lastActivity: Date.now() }, candidate, new URL('./transport/broker/broker.js', import.meta.url));
         if (runtime !== current || stopped) { await candidate.disconnect(); return; }
-        client = candidate; connectionError = undefined; reconnectDelay = 1000; status();
+        client = candidate; candidate.updatePresence({ name: context.sessionManager.getSessionName() ?? current.self });
+        connectionError = undefined; reconnectDelay = 1000; status();
       } catch (error) {
         await candidate.disconnect();
         connectionError = (error as { code?: string }).code === 'E_SESSION_HELD' ? 'IDENTITY_CONFLICT' : 'TARGET_UNAVAILABLE';
@@ -176,6 +186,7 @@ export default function comms(pi: ExtensionAPI) {
     }, 150); timer.unref();
     status();
   });
+  pi.on('session_info_changed', event => { if (runtime) client?.updatePresence({ name: event.name ?? runtime.self }); });
   pi.on('agent_start', () => { active = true; wakeReserved = false; });
   pi.on('agent_end', () => { active = false; });
   pi.on('agent_settled', () => { wakeReserved = false; });
@@ -200,11 +211,12 @@ export default function comms(pi: ExtensionAPI) {
   async function peers(view = 'known', cursor?: string) {
     await ensureConnection();
     const live = (await client!.listSessions()).filter(p => p.id !== runtime!.self);
+    live.forEach(peer => peerNames.set(peer.id, peer.name ?? peer.id));
     const known = runtime!.known();
     const all = [...new Set([...known.map(p => p.id), ...(view === 'all' ? live.map(p => p.id) : [])])];
     const ranked = all.map(id => {
       const approval = known.find(p => p.id === id); const session = live.find(p => p.id === id);
-      return { id, name: session?.name ?? approval?.name ?? id, approved: !!approval, context: approval?.context ?? null, presence: session ? 'online' : 'offline', reason: approval ? 'user-approved colleague for this work' : 'broader discovery; not approved', cwd: session?.cwd };
+      return { id, name: session?.name ?? peerNames.get(id) ?? approval?.name ?? id, approved: !!approval, context: approval?.context ?? null, presence: session ? 'online' : 'offline', reason: approval ? 'user-approved colleague for this work' : 'broader discovery; not approved', cwd: session?.cwd };
     });
     const start = cursor ? ranked.findIndex(p => p.id === cursor) + 1 : 0;
     if (cursor && !start) throw new Error('CONTEXT_LOST');
@@ -217,7 +229,7 @@ export default function comms(pi: ExtensionAPI) {
     if (action === 'pause' || action === 'resume') { runtime.paused = action === 'pause'; status(); commandCtx.ui.notify(`${runtime.paused ? 'Reception paused; arrivals remain buffered.' : 'Reception resumed.'} ${HELP}`, 'info'); if (!runtime.paused) pump(); return; }
     if (action === 'requests') {
       if (!commandCtx.hasUI) return commandCtx.ui.notify('Contact requests require a human confirmation UI; messages remain held.', 'warning');
-      const requests = [...incoming.entries()].filter(([peer]) => !runtime!.isApproved(peer));
+      const requests = contactRequests();
       if (!requests.length) return commandCtx.ui.notify('No contact requests waiting.', 'info');
       const labels = requests.map(([peer, request]) => `${request.name} · ${request.subject} · ${peer}`);
       const choice = requests.length === 1 ? labels[0] : await commandCtx.ui.select('Contact requests — choose a colleague', labels);
@@ -238,7 +250,7 @@ export default function comms(pi: ExtensionAPI) {
           do { const page = await peers('all', cursor); available.push(...page.items); cursor = page.nextCursor ?? undefined; } while (cursor);
         }
         // The selector always displays the exact native identity, never an ambiguous name route.
-        const choices = action === 'revoke' ? runtime.known() : available;
+        const choices = action === 'revoke' ? runtime.known().map(peer => ({ ...peer, name: name(peer.id) })) : available;
         const labels = choices.map(p => `${p.name} · ${p.id}`);
         const selected = id ?? (await commandCtx.ui.select(`${action === 'approve' ? 'Approve' : 'Revoke'} exact colleague`, labels))?.split(' · ').at(-1);
         if (!selected) return;
@@ -252,7 +264,7 @@ export default function comms(pi: ExtensionAPI) {
         const collaboration = await commandCtx.ui.input('What work is this colleague approved for?');
         if (!collaboration?.trim()) return;
         if (await commandCtx.ui.confirm('Approve contact for this work?', `${peer.name}\nNative session: ${selected}\nWork: ${collaboration}\nAllows requests, clarifications and handbacks for this collaboration, not new missions. Peer traffic cannot grant approval. Approval is lost on reload/restart.`)) {
-          runtime.approveFromOwner({ id: selected, name: peer.name, context: collaboration.trim() }); declined.delete(selected); incoming.delete(selected);
+          runtime.approveFromOwner({ id: selected, name: peer.name, context: collaboration.trim() }); declined.delete(selected);
         }
       } catch (error) { commandCtx.ui.notify(String(error), 'error'); }
       finally { approvalDialog = false; status(); }
@@ -265,7 +277,7 @@ export default function comms(pi: ExtensionAPI) {
       finally { approvalDialog = false; }
       return;
     }
-    commandCtx.ui.notify(`${HELP}\n${runtime.waiting.length} waiting · ${hold() ?? 'ready'}\n${runtime.known().map(p => `${p.name} · ${p.id} · ${p.context}`).join('\n')}\n${RESET}`, 'info');
+    commandCtx.ui.notify(`${HELP}\n${runtime.waiting.length} waiting · ${hold() ?? 'ready'}\n${runtime.known().map(p => `${name(p.id)} · ${p.id} · ${p.context}`).join('\n')}\n${RESET}`, 'info');
   } });
   const result = (data: unknown, error?: { code: string; message: string; nextAction: string }) => {
     const body = { ok: !error, ...(error ? { error, ...(data ? { data } : {}) } : { data }), observedAt: new Date().toISOString() };

@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,16 +12,20 @@ const extensionPath = process.env.PI_COMMS_TEST_EXTENSION ?? fileURLToPath(new U
 const root = mkdtempSync(join(tmpdir(), 'pc-base-native-'));
 // Set before dynamic broker imports; the bundled extension resolves paths at startup.
 process.env.PI_CODING_AGENT_DIR = root;
-const waitFor = async (predicate: () => boolean) => {
+after(async () => {
+  try { process.kill(Number(readFileSync(join(root, 'comms', 'broker.pid'), 'utf8')), 'SIGTERM'); } catch {}
+  await new Promise(r => setTimeout(r, 100)); rmSync(root, { recursive: true, force: true });
+});
+const waitFor = async (predicate: () => boolean | Promise<boolean>) => {
   const deadline = Date.now() + 8000;
-  while (!predicate()) { if (Date.now() > deadline) throw new Error('Native fixture timed out'); await new Promise(r => setTimeout(r, 10)); }
+  while (!await predicate()) { if (Date.now() > deadline) throw new Error('Native fixture timed out'); await new Promise(r => setTimeout(r, 10)); }
 };
 const text = (messages: any[]) => messages.map(m => typeof m.content === 'string' ? m.content : m.content?.map((b: any) => b.text ?? '').join('')).join('\n');
 async function participant(label: string, interactive = true) {
   const dir = join(root, label); mkdirSync(dir);
   const faux = fauxProvider({ provider: `comms-base-${label}` });
   const models = await ModelRuntime.create({ authPath: join(root, `${label}-auth.json`), modelsPath: null, refreshOnCreate: false }); models.registerNativeProvider(faux.provider);
-  const observed: any[][] = []; const notifications: string[] = []; const inspectedByHuman: string[] = []; const events: any[] = []; const widgetUpdates: unknown[] = [];
+  const observed: any[][] = []; const notifications: string[] = []; const inspectedByHuman: string[] = []; const events: any[] = []; const widgetUpdates: unknown[] = []; const selections: { title: string; choices: string[] }[] = [];
   const dialogs: { title: string; message: string }[] = [];
   let draft = ''; let confirm: boolean | ((opts?: { signal?: AbortSignal }) => Promise<boolean>) = false; let hold = false; const releases: (() => void)[] = [];
   faux.setResponses(Array.from({ length: 100 }, () => async context => {
@@ -36,7 +40,7 @@ async function participant(label: string, interactive = true) {
     return { ...created, services, diagnostics: [] };
   };
   const runtime = await createAgentSessionRuntime(factory, { cwd: dir, agentDir: root, sessionManager: manager });
-  const bind = async (session: any) => session.bindExtensions(interactive ? { mode: 'tui', uiContext: { ...session.extensionRunner.getUIContext(), getEditorText: () => draft, notify: (message: string) => notifications.push(message), setWidget: (_key: string, content: unknown) => { widgetUpdates.push(content); }, confirm: async (title: string, message: string, opts?: { signal?: AbortSignal }) => { dialogs.push({ title, message }); return typeof confirm === 'function' ? confirm(opts) : confirm; }, input: async () => 'Base integration review', select: async (_title: string, choices: string[]) => choices[0], editor: async (_title: string, value: string) => { inspectedByHuman.push(value); return undefined; } } } : { mode: 'print' });
+  const bind = async (session: any) => session.bindExtensions(interactive ? { mode: 'tui', uiContext: { ...session.extensionRunner.getUIContext(), getEditorText: () => draft, notify: (message: string) => notifications.push(message), setWidget: (_key: string, content: unknown) => { widgetUpdates.push(content); }, confirm: async (title: string, message: string, opts?: { signal?: AbortSignal }) => { dialogs.push({ title, message }); return typeof confirm === 'function' ? confirm(opts) : confirm; }, input: async () => 'Base integration review', select: async (title: string, choices: string[]) => { selections.push({ title, choices }); return choices[0]; }, editor: async (_title: string, value: string) => { inspectedByHuman.push(value); return undefined; } } } : { mode: 'print' });
   await bind(runtime.session); runtime.setRebindSession(bind);
   runtime.session.subscribe(event => events.push(event));
   const tool = async (name: string, input: unknown, signal?: AbortSignal) => {
@@ -44,7 +48,7 @@ async function participant(label: string, interactive = true) {
     const definition = runner.getToolDefinition(name)!;
     return definition.execute(randomUUID(), input, signal, undefined, runner.createToolContext(randomUUID(), signal));
   };
-  return { runtime, observed, notifications, inspectedByHuman, dialogs, events, widgetUpdates, tool, manager, dir,
+  return { runtime, observed, notifications, inspectedByHuman, dialogs, events, widgetUpdates, selections, tool, manager, dir,
     responses: (responses: any[]) => faux.setResponses(responses.map(response => async (context: any) => { observed.push(structuredClone(context.messages)); return typeof response === 'function' ? response(context) : response; })),
     id: () => runtime.session.sessionId,
     command: (args: string) => runtime.session.prompt(`/comms ${args}`),
@@ -320,6 +324,59 @@ test('installed Base model tools: private inspection boundary and discover → s
   } finally { await b?.close(); await a?.close(); }
 });
 
+test('native rename updates exact discovery, first-contact confirmation and contact selector', async () => {
+  let a: Awaited<ReturnType<typeof participant>> | undefined, b: Awaited<ReturnType<typeof participant>> | undefined;
+  try {
+    a = await participant('rename-coordinator'); b = await participant('rename-reviewer');
+    const id = b.id();
+    assert.equal(data(await a.tool('comms_peers', { view: 'all' })).data.items.find((p: any) => p.id === id).name, id);
+    b.runtime.session.setSessionName('Reviewer');
+    await waitFor(async () => data(await a!.tool('comms_peers', { view: 'all' })).data.items.some((p: any) => p.id === id && p.name === 'Reviewer'));
+    assert.equal(b.id(), id, 'rename changes only label, never routing identity');
+    assert.equal(data(await a.tool('comms_message', { to: id, subject: 'Rename review', text: 'read only' })).error.code, 'CONTACT_NOT_APPROVED');
+    assert.match(a.dialogs.at(-1)!.title, /with Reviewer/);
+    b.runtime.session.setSessionName('Renamed Reviewer');
+    await waitFor(async () => data(await a!.tool('comms_peers', { view: 'all' })).data.items.some((p: any) => p.id === id && p.name === 'Renamed Reviewer'));
+    a.confirm(true); await a.command('approve');
+    assert.ok(a.selections.at(-1)!.choices.includes(`Renamed Reviewer · ${id}`));
+    assert.match(a.dialogs.at(-1)!.message, /Renamed Reviewer/);
+    b.runtime.session.setSessionName('');
+    await waitFor(async () => data(await a!.tool('comms_peers', {})).data.items.some((p: any) => p.id === id && p.name === id));
+    b.runtime.session.setSessionName('Latest Reviewer');
+    await waitFor(async () => data(await a!.tool('comms_peers', {})).data.items.some((p: any) => p.id === id && p.name === 'Latest Reviewer'));
+    await a.command('revoke');
+    assert.ok(a.selections.at(-1)!.choices.includes(`Latest Reviewer · ${id}`), 'existing-contact selector uses current label too');
+  } finally { await b?.close(); await a?.close(); }
+});
+
+test('revoked paused contact is recoverable through the same requests command advertised by the widget', async () => {
+  let a: Awaited<ReturnType<typeof participant>> | undefined, b: Awaited<ReturnType<typeof participant>> | undefined;
+  try {
+    a = await participant('revoke-coordinator'); b = await participant('revoke-reviewer');
+    a.confirm(true); b.confirm(true);
+    await a.tool('comms_message', { to: b.id(), subject: 'Bootstrap', text: 'initial approved work' });
+    await waitFor(() => b!.observed.length === 1 && b!.runtime.session.isIdle);
+    await b.command('pause');
+    const sent = data(await a.tool('comms_message', { to: b.id(), subject: 'Held review', text: 'REVOKED_QUEUE_CONTENT' })).data;
+    await waitFor(async () => data(await b!.tool('comms_inspect', { queue: 'self' })).data.items.some((e: any) => e.message.id === sent.message.id));
+    await b.command(`revoke ${a.id()}`);
+    assert.doesNotMatch(JSON.stringify(data(await b.tool('comms_inspect', { queue: 'self' }))), /REVOKED_QUEUE_CONTENT/);
+    assert.ok(b.widgetUpdates.some(widget => JSON.stringify(widget)?.includes('/comms requests')));
+    const dialogsBefore = b.dialogs.length;
+    await b.command('requests');
+    assert.equal(b.dialogs.length, dialogsBefore + 1, 'advertised recovery opens the actual held request');
+    assert.match(b.dialogs.at(-1)!.title, /requesting collaboration/);
+    assert.match(b.dialogs.at(-1)!.message, /REVOKED_QUEUE_CONTENT/);
+    assert.equal(b.observed.length, 1, 'reapproval does not bypass Pause');
+    await b.command('resume');
+    await waitFor(() => b!.observed.length === 2 && b!.runtime.session.isIdle);
+    assert.match(text(b.observed[1]), /REVOKED_QUEUE_CONTENT/);
+    assert.deepEqual(data(await b.tool('comms_inspect', { queue: 'self' })).data.items, []);
+    const posted = b.runtime.session.sessionManager.getEntries().filter(e => e.type === 'custom_message' && (e.details as any)?.ids?.includes(sent.message.id));
+    assert.equal(posted.length, 1, 'original held message admitted once, not resent');
+  } finally { await b?.close(); await a?.close(); }
+});
+
 test('packaged extension: first-run approval, exact wire, delayed replies, Stop/Pause, native switch/resume/fork', async () => {
   let a: Awaited<ReturnType<typeof participant>> | undefined;
   let b: Awaited<ReturnType<typeof participant>> | undefined;
@@ -422,7 +479,5 @@ test('packaged extension: first-run approval, exact wire, delayed replies, Stop/
     assert.equal(data(await a.tool('comms_inspect', { message: held.data.message.id })).ok, true);
   } finally {
     await b?.close(); await a?.close();
-    try { const pid = Number(readFileSync(join(root, 'comms', 'broker.pid'), 'utf8')); process.kill(pid, 'SIGTERM'); } catch {}
-    await new Promise(r => setTimeout(r, 100)); rmSync(root, { recursive: true, force: true });
   }
 });

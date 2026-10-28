@@ -19,10 +19,10 @@ Date: 2026-10-28. Starting revision: `bbafcce4896f515204dd6da04a626c46f2bd358c`,
 Environment: macOS arm64, Node 22.23.3, Pi 1.4.0.
 
 - `npm run check`: production source TypeScript check passes.
-- `npm run test:base`: 14/14 pass. Includes actual compiled extension loaded by native resource loader; isolated broker and two real Pi sessions with a scripted local faux provider.
-- `npm test`: 41/41 pass: 14 Base tests plus 27 historical/prototype spike tests. These are not 41 tests of the production implementation.
+- `npm run test:base`: 16/16 pass. Includes actual compiled extension loaded by native resource loader; isolated broker and two real Pi sessions with a scripted local faux provider.
+- `npm test`: 43/43 pass: 16 Base tests plus 27 historical/prototype spike tests. These are not 43 tests of the production implementation.
 - `npm run test:original`: 32/32 pinned upstream regression tests pass.
-- `npm run test:artifact`: builds/packs, installs tarball into a temporary prefix with peers omitted, loads via real Pi resource loader, then reruns 6 native Base integration scenarios against the installed artifact. No normal environment installation.
+- `npm run test:artifact`: builds/packs, installs tarball into a temporary prefix with peers omitted, loads via real Pi resource loader, then reruns 8 native Base integration scenarios against the installed artifact. No normal environment installation.
 - `git diff --check`: passes.
 - Clean temporary checkout: `npm ci --ignore-scripts && npm run verify` passes without pre-existing node_modules, dist or upstream fixture.
 
@@ -51,6 +51,14 @@ Four new native integration scenarios (also rerun from the installed artifact) c
 - Editor-draft and Pause precedence for incoming contact decisions; session replacement cancels an old dialog even if its late result says Allow.
 
 These are deterministic execution/interaction tests, not a claim that an unfamiliar model or the owner has accepted the revised UX. No paid trials repeated. Real-use acceptance is still pending.
+
+## Session labels and revoked-contact recovery
+
+Two focused native regressions failed on 6f1a0bf before repair:
+- Native `setSessionName` did not update the broker, leaving discovery/first-contact labels stale. The extension now publishes `session_info_changed` through the existing `updatePresence` method, including clearing a name back to the stable UUID fallback. Connection completion also publishes the current name so a rename during registration is not lost. Incoming presence updates refresh display-only labels for held requests/cards/contact management; none changes routing identity or grants approval.
+- After pause → queued approved message → revoke, the widget offered `/comms requests` but its separate request map was empty. Contact requests now derive from the actual unapproved waiting queue, grouped by exact sender, rather than another copy of request content. Reapproval through the advertised command leaves Pause intact; Resume posts the original message exactly once.
+
+The installed-artifact suite includes rename/discover/first-contact/approve/revoke selector/name-clear checks and the complete pause/send/revoke/requests/reapprove/resume recovery path. Filtered test runs now have unconditional module teardown for their owned temporary broker/runtime, even when the final lifecycle scenario is not selected. No live sessions or normal installations were restarted for verification.
 
 ## Native error visibility repair after live reply feedback
 

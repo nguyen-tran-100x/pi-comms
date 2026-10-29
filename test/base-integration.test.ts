@@ -8,6 +8,7 @@ import { fauxProvider, fauxAssistantMessage } from '@earendil-works/pi-ai';
 import { KeybindingsManager, TUI_KEYBINDINGS } from '@earendil-works/pi-tui';
 import { createAgentSessionRuntime, createAgentSessionServices, createAgentSessionFromServices, createReadTool, ModelRuntime, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { fileURLToPath } from 'node:url';
+import { Type } from 'typebox';
 const extensionPath = process.env.PI_COMMS_TEST_EXTENSION ?? fileURLToPath(new URL('../dist/extension.js', import.meta.url));
 
 const root = mkdtempSync(join(tmpdir(), 'pc-base-native-'));
@@ -22,7 +23,7 @@ const waitFor = async (predicate: () => boolean | Promise<boolean>) => {
   while (!await predicate()) { if (Date.now() > deadline) throw new Error('Native fixture timed out'); await new Promise(r => setTimeout(r, 10)); }
 };
 const text = (messages: any[]) => messages.map(m => typeof m.content === 'string' ? m.content : m.content?.map((b: any) => b.text ?? '').join('')).join('\n');
-async function participant(label: string, interactive = true) {
+async function participant(label: string, interactive = true, extraTools: any[] = []) {
   const dir = join(root, label); mkdirSync(dir);
   const faux = fauxProvider({ provider: `comms-base-${label}` });
   const models = await ModelRuntime.create({ authPath: join(root, `${label}-auth.json`), modelsPath: null, refreshOnCreate: false }); models.registerNativeProvider(faux.provider);
@@ -37,7 +38,7 @@ async function participant(label: string, interactive = true) {
   const manager = SessionManager.create(dir, join(root, 'sessions'));
   const factory = async ({ cwd, agentDir, sessionManager, sessionStartEvent }: any) => {
     const services = await createAgentSessionServices({ cwd, agentDir, modelRuntime: models, settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }), resourceLoaderOptions: { noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, additionalExtensionPaths: [extensionPath] } });
-    const created = await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent, model: faux.getModel(), noTools: 'builtin', customTools: [createReadTool(cwd)] });
+    const created = await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent, model: faux.getModel(), noTools: 'builtin', customTools: [createReadTool(cwd), ...extraTools] });
     return { ...created, services, diagnostics: [] };
   };
   const runtime = await createAgentSessionRuntime(factory, { cwd: dir, agentDir: root, sessionManager: manager });
@@ -161,6 +162,7 @@ test('actual provider request contains registered tool properties without networ
     assert.match(roster.nextAction, /load pi-comms.*share the broker agent directory.*intercom-only/);
     await a.command('status'); assert.match(a.notifications.at(-1)!, /Broker:/);
     await a.runtime.session.prompt('synthetic schema capture');
+    assert.match(JSON.stringify(a.observed[0]), /Do not send courtesy, formality, acknowledgement-only or closing messages/);
     let captured: any;
     const model = a.models.getModel('openai', 'gpt-5.4-mini')!;
     const response = await a.models.streamSimple(model, { messages: a.observed[0] } as any, {
@@ -172,7 +174,7 @@ test('actual provider request contains registered tool properties without networ
     }).result();
     assert.equal(response.stopReason, 'error'); assert.ok(captured);
     const declarations = [...(captured.tools ?? []), ...captured.input.filter((item: any) => item.type === 'additional_tools').flatMap((item: any) => item.tools)];
-    for (const name of ['comms_message', 'comms_inspect']) {
+    for (const name of ['comms_message', 'comms_ask', 'comms_inspect']) {
       const declaration = declarations.find((tool: any) => tool.name === name);
       assert.equal(declaration.parameters.type, 'object');
       assert.ok(Object.keys(declaration.parameters.properties).length > 0);
@@ -211,11 +213,13 @@ const lastResult = (context: any, name: string) => {
   const result = context.messages.filter((m: any) => m.role === 'toolResult' && m.toolName === name).at(-1);
   assert.ok(result, `missing actual ${name} result`);
   if (name === 'comms_message' && !result.isError) {
-    assert.match(text([result]), /^Accepted by transport; not proof of read or completion\./);
+    assert.match(text([result]), /^Sent to /);
     assert.doesNotMatch(text([result]), /"facts"|"createdAt"/);
     return { ok: true };
   }
-  return JSON.parse(text([result]));
+  assert.ok(result.details, 'structured evidence retained alongside plain text');
+  assert.doesNotMatch(text([result]), /^\{"ok"/);
+  return result.details;
 };
 
 test('first-contact approval continues the actual model/tool review without preapproval commands', async t => {
@@ -393,7 +397,7 @@ test('installed Base model tools: private inspection boundary and discover → s
       assert.doesNotMatch(text(request), /PRIVATE_/);
       assert.ok(!JSON.stringify(request).includes(privateHandle));
     }
-    assert.match(text(b.observed.at(-1)!), /CONTACT_NOT_APPROVED/);
+    assert.match(text(b.observed.at(-1)!), /contact not approved/);
     // Approve while paused: metadata-only inspection changes to complete evidence, without automatic intake.
     await b.command('pause'); b.confirm(true); await b.command('approve');
     assert.match(JSON.stringify(data(await b.tool('comms_inspect', { message: privateMessage.message.id }))), /PRIVATE_BODY/);
@@ -673,4 +677,166 @@ test('packaged extension: first-run approval, exact wire, delayed replies, Stop/
   } finally {
     await b?.close(); await a?.close();
   }
+});
+
+test('nested ask hands structured output to its caller without banning composition or duplicate injection', async () => {
+  const b = await participant('ask-nested-b');
+  let nested: any;
+  const a = await participant('ask-nested-a', true, [{ name: 'ask_via_caller', label: 'Caller', description: 'Fixture nested tool caller', parameters: Type.Object({}), execute: async (_id: string, _args: unknown, _signal: AbortSignal, _update: unknown, ctx: any) => {
+    nested = await ctx.executeTool('comms_ask', { requests: [{ to: b.id(), subject: 'Nested', text: 'question' }], timeoutSeconds: 2 });
+    assert.equal(nested.result.structuredContent.data.items[0].outcome, 'replied');
+    return nested.result;
+  } }]);
+  try {
+    a.confirm(true);
+    b.responses([context => call('comms_message', { respondTo: text(context.messages).match(/Reply with respondTo: "([0-9a-f-]{36})"/)![1], text: 'NESTED_REPLY' }), fauxAssistantMessage('Done.')]);
+    a.responses([call('ask_via_caller', {}), context => {
+      assert.equal((text(context.messages).match(/NESTED_REPLY/g) ?? []).length, 1);
+      return fauxAssistantMessage('Caller received a reply.');
+    }]);
+    await a.runtime.session.prompt('Ask through the caller.');
+    assert.equal(a.runtime.session.agent.state.messages.filter(m => m.role === 'assistant').at(-1)?.stopReason, 'stop');
+    assert.ok(nested); assert.equal(nested.isError, false);
+    assert.equal(data(await a.tool('comms_inspect', { queue: 'self' })).data.items.length, 0);
+    const reply = nested.result.structuredContent.data.items[0].reply;
+    const evidence = data(await a.tool('comms_inspect', { message: reply })).data;
+    assert.equal(evidence.message.text, 'NESTED_REPLY');
+    assert.ok(evidence.facts.some((f: any) => f.kind === 'posted' && f.source === 'ask result handed to nested caller'));
+    assert.ok(!evidence.facts.some((f: any) => f.kind === 'saved'), 'nested handoff is not a native saved child result');
+    assert.equal(a.runtime.session.sessionManager.getEntries().filter(e => e.type === 'custom_message' && e.customType === 'comms_batch').length, 0);
+  } finally { await b.close(); await a.close(); }
+});
+
+test('native overlapping asks to one peer correlate separate requests and return partial timeout', async () => {
+  const a = await participant('ask-overlap-a'), b = await participant('ask-overlap-b');
+  try {
+    a.confirm(true); await a.command(`approve ${b.id()}`); await b.command('pause');
+    const first = call('comms_ask', { requests: [{ to: b.id(), subject: 'First', text: 'first request' }], timeoutSeconds: .3 });
+    const second = call('comms_ask', { requests: [{ to: b.id(), subject: 'Second', text: 'second request' }], timeoutSeconds: 1 });
+    a.responses([{ ...first, content: [...first.content, ...second.content] }, fauxAssistantMessage('One missing, one replied.')]);
+    const work = a.runtime.session.prompt('Ask independently.');
+    await waitFor(async () => data(await b.tool('comms_inspect', { queue: 'self' })).data.items.length === 2);
+    const incoming = data(await b.tool('comms_inspect', { queue: 'self' })).data.items;
+    const secondRequest = incoming.find((item: any) => item.message.subject === 'Second');
+    assert.equal(data(await b.tool('comms_message', { respondTo: secondRequest.returnHandle, text: 'SECOND_ONLY' })).ok, true);
+    await work;
+    const results = a.observed.at(-1)!.filter((m: any) => m.role === 'toolResult' && m.toolName === 'comms_ask');
+    const items = results.flatMap((m: any) => m.details.data.items);
+    assert.equal(items.find((item: any) => item.subject === 'First').outcome, 'timeout');
+    assert.equal(items.find((item: any) => item.subject === 'Second').outcome, 'replied');
+    const progress = data(await a.tool('comms_inspect', { requests: items.map((item: any) => item.request) })).data.responses;
+    assert.equal(progress.find((r: any) => r.subject === 'First').outcome, 'no-reply-yet');
+    assert.equal(progress.find((r: any) => r.subject === 'Second').outcome, 'reply-received');
+  } finally { await b.close(); await a.close(); }
+});
+
+test('native serialized host: one ask dispatches all reviewers, returns full replies once and permits follow-ups', async () => {
+  const a = await participant('ask-native-a'), b = await participant('ask-native-b'), c = await participant('ask-native-c'), d = await participant('ask-native-d');
+  let release!: () => void; const bothDispatched = new Promise<void>(done => { release = done; });
+  try {
+    a.confirm(true); a.runtime.session.agent.toolExecution = 'sequential'; await d.command('pause');
+    b.responses([async context => {
+      await bothDispatched;
+      return call('comms_message', { respondTo: text(context.messages).match(/Reply with respondTo: "([0-9a-f-]{36})"/)![1], text: 'B_ASK_FINDING' });
+    }, fauxAssistantMessage('Done.')]);
+    c.responses([context => {
+      release();
+      return call('comms_message', { respondTo: text(context.messages).match(/Reply with respondTo: "([0-9a-f-]{36})"/)![1], text: 'C_ASK_CLARIFICATION' });
+    }, fauxAssistantMessage('Done.')]);
+    a.responses([call('comms_ask', { requests: [{ to: b.id(), subject: 'Risk', text: 'review B' }, { to: c.id(), subject: 'Risk', text: 'review C' }, { to: d.id(), subject: 'Risk', text: 'review D' }, { to: randomUUID(), subject: 'Unavailable', text: 'cannot dispatch' }], timeoutSeconds: 2 }), context => {
+      const result = lastResult(context, 'comms_ask');
+      assert.deepEqual(result.data.items.map((item: any) => item.outcome), ['replied', 'replied', 'timeout', 'not-sent']);
+      assert.equal((text(context.messages).match(/B_ASK_FINDING/g) ?? []).length, 1);
+      assert.equal((text(context.messages).match(/C_ASK_CLARIFICATION/g) ?? []).length, 1);
+      assert.match(text(context.messages), /Reply with respondTo/);
+      return fauxAssistantMessage('B returned a finding; C needs clarification, not complete.');
+    }]);
+    await a.runtime.session.prompt('Ask all three reviewers.');
+    assert.equal(a.runtime.session.agent.state.messages.filter(m => m.role === 'assistant').at(-1)?.stopReason, 'stop');
+    await waitFor(() => b.runtime.session.isIdle && c.runtime.session.isIdle);
+    const outbox = data(await a.tool('comms_inspect', { outbox: 'self' })).data.items;
+    assert.equal(outbox.length, 3);
+    assert.equal(data(await d.tool('comms_inspect', { queue: 'self' })).data.items.length, 1);
+    assert.equal(data(await a.tool('comms_inspect', { queue: 'self' })).data.items.length, 0);
+    assert.equal(a.runtime.session.sessionManager.getEntries().filter(e => e.type === 'custom_message' && e.customType === 'comms_batch').length, 0, 'ask replies must not also be unsolicited messages');
+    const result = a.observed.at(-1)!.find((m: any) => m.role === 'toolResult' && m.toolName === 'comms_ask');
+    const renderer = a.runtime.session.extensionRunner!.getToolDefinition('comms_ask')!.renderResult!;
+    const rendered = renderer({ content: result.content, details: result.details } as any, { expanded: false } as any, { fg: (_: string, value: string) => value } as any);
+    assert.match(rendered.render(120).join('\n'), /replied/);
+    const response = data(await a.tool('comms_inspect', { message: outbox[0].responses[0] })).data;
+    b.responses([fauxAssistantMessage('Useful follow-up received.')]);
+    assert.equal(data(await a.tool('comms_message', { respondTo: response.returnHandle, text: 'Necessary correction, not courtesy.' })).ok, true);
+    const progress = data(await a.tool('comms_inspect', { requests: outbox.map((e: any) => e.message.id) })).data.responses;
+    assert.deepEqual(progress.map((p: any) => p.outcome), ['reply-received', 'reply-received', 'no-reply-yet']);
+  } finally { release(); await d.close(); await c.close(); await b.close(); await a.close(); }
+});
+
+test('native ask interruption after result resolution retains reply and removes duplicate tool presentation', async () => {
+  const a = await participant('ask-boundary-a'), b = await participant('ask-boundary-b');
+  let interrupted = false;
+  try {
+    a.confirm(true);
+    b.responses([context => call('comms_message', { respondTo: text(context.messages).match(/Reply with respondTo: "([0-9a-f-]{36})"/)![1], text: 'BOUNDARY_RETAINED_ANSWER' }), fauxAssistantMessage('Done.')]);
+    a.responses([call('comms_ask', { requests: [{ to: b.id(), subject: 'Boundary', text: 'question' }], timeoutSeconds: 2 }), fauxAssistantMessage('must not run before interruption')]);
+    const unsubscribe = a.runtime.session.subscribe(event => {
+      if (event.type === 'tool_execution_end' && event.toolName === 'comms_ask' && !interrupted) {
+        interrupted = true; a.draft('Human takes priority'); void a.runtime.session.abort();
+      }
+    });
+    await a.runtime.session.prompt('Ask B.'); unsubscribe();
+    assert.equal(interrupted, true);
+    assert.equal(a.observed.length, 1, 'no model follow-up got the resolved result');
+    const queued = data(await a.tool('comms_inspect', { queue: 'self' })).data.items;
+    assert.equal(queued.length, 1); assert.equal(queued[0].message.text, 'BOUNDARY_RETAINED_ANSWER');
+    a.responses([fauxAssistantMessage('Continue on human direction.'), fauxAssistantMessage('Retained answer received.')]);
+    a.draft(''); await a.runtime.session.prompt('Continue now.');
+    await waitFor(() => a.observed.some(messages => text(messages).includes('BOUNDARY_RETAINED_ANSWER')) && a.runtime.session.isIdle);
+    const received = a.observed.filter(messages => text(messages).includes('BOUNDARY_RETAINED_ANSWER'));
+    for (const messages of received) assert.equal((text(messages).match(/BOUNDARY_RETAINED_ANSWER/g) ?? []).length, 1);
+    assert.equal(data(await a.tool('comms_inspect', { queue: 'self' })).data.items.length, 0);
+  } finally { await b.close(); await a.close(); }
+});
+
+test('ask approvals exclude decision time; partial refusal, timeout and late replies remain independent', async () => {
+  const a = await participant('ask-partial-a'), b = await participant('ask-partial-b'), c = await participant('ask-partial-c');
+  const decisions: ((allow: boolean) => void)[] = [];
+  try {
+    a.confirm(opts => new Promise(resolve => { decisions.push(resolve); opts?.signal?.addEventListener('abort', () => resolve(false), { once: true }); }));
+    const started = a.tool('comms_ask', { requests: [{ to: b.id(), subject: 'Allowed', text: 'question' }, { to: c.id(), subject: 'Refused', text: 'question' }], timeoutSeconds: .1 });
+    await waitFor(() => decisions.length === 1); await new Promise(r => setTimeout(r, 180));
+    assert.equal(data(await a.tool('comms_inspect', { outbox: 'self' })).data.items.length, 0);
+    decisions[0](true); await waitFor(() => decisions.length === 2);
+    await new Promise(r => setTimeout(r, 180));
+    const allowed = data(await a.tool('comms_inspect', { outbox: 'self' })).data.items[0];
+    assert.equal(allowed.state, 'accepted');
+    const releasedAt = Date.now(); decisions[1](false);
+    const result = data(await started).data;
+    assert.ok(Date.now() - releasedAt >= 70, 'sibling approval-dialog time is also excluded');
+    assert.deepEqual(result.items.map((i: any) => i.outcome), ['timeout', 'not-sent']);
+    assert.match(result.items[1].code, /CONTACT_NOT_APPROVED/);
+    const request = data(await b.tool('comms_inspect', { message: result.items[0].request })).data;
+    assert.equal(data(await b.tool('comms_message', { respondTo: request.returnHandle, text: 'LATE_USEFUL_REPLY' })).ok, true);
+    await waitFor(() => a.observed.some(messages => text(messages).includes('LATE_USEFUL_REPLY')) && a.runtime.session.isIdle);
+    assert.equal(c.observed.length, 0);
+  } finally { decisions.forEach(resolve => resolve(false)); await c.close(); await b.close(); await a.close(); }
+});
+
+test('active ask ends promptly on Pause, peer revoke, stop and native session replacement', async () => {
+  const a = await participant('ask-controls-a'), b = await participant('ask-controls-b');
+  try {
+    a.confirm(true);
+    for (const control of ['pause', 'revoke', 'stop', 'switch'] as const) {
+      const abort = new AbortController();
+      const pending = a.tool('comms_ask', { requests: [{ to: b.id(), subject: control, text: 'question' }], timeoutSeconds: 60 }, abort.signal);
+      await waitFor(async () => data(await a.tool('comms_inspect', { outbox: 'self' })).data.items.some((e: any) => e.message.subject === control));
+      if (control === 'pause') await a.command('pause');
+      else if (control === 'revoke') await a.command(`revoke ${b.id()}`);
+      else if (control === 'stop') abort.abort();
+      else await a.runtime.newSession();
+      const result = await Promise.race([pending, new Promise<never>((_, reject) => setTimeout(() => reject(new Error('local wait did not end')), 1500).unref())]);
+      assert.equal(data(result).data.items[0].outcome, ({ pause: 'paused', revoke: 'revoked', stop: 'interrupted', switch: 'context-lost' })[control]);
+      if (control === 'pause') await a.command('resume');
+      if (control === 'revoke') await a.command(`approve ${b.id()}`);
+    }
+  } finally { await b.close(); await a.close(); }
 });

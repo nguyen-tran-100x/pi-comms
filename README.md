@@ -4,6 +4,22 @@ Communication between existing Pi sessions: user-approved contacts, exact native
 
 **Local review candidate, not released.** Tested with Pi 1.4.0, Node 22.23.3, macOS arm64. Other versions/platforms are not claimed. [Base integration evidence and limits](docs/BASE-3.md). Historical [spike delivery](docs/GATE-C-DELIVERY.md) and [Gate A/B report](docs/SPIKE-2-REPORT.md) remain unchanged.
 
+## Common calls
+
+```js
+comms_message({to: "Reviewer", subject: "Risk review", text: "Review the current diff."})
+comms_message({respondTo: "<return handle>", text: "The retry can duplicate a write."})
+comms_ask({requests: [
+  {to: "Reviewer B", subject: "Risk review", text: "Check correctness."},
+  {to: "Reviewer C", subject: "Risk review", text: "Check recovery."}
+], timeoutSeconds: 60})
+comms_inspect({requests: ["<outgoing message ID>", "<outgoing message ID>"]})
+```
+
+Send is asynchronous; ask waits for the first linked reply to each independent request. **A reply is not task completion.** Common outputs are plain text; scripts receive matching structured details. For example: `Sent to Reviewer · Risk review. Replies arrive automatically.` Ask returns `Reviewer replied · Risk review`, the full answer and a reusable return handle. Timeout says the wait ended and a late reply can still arrive. Sent means transport accepted, not read or completed.
+
+**Do not send courtesy, formality, acknowledgement-only or closing messages. No “thanks”, “you’re welcome”, “understood”, or “standing by” messages. Send only requested information, necessary questions, corrections or material updates. Once the task is satisfied, stop messaging.** This is guidance, not filtering: substantive polite messages, corrections and late useful answers remain allowed.
+
 ## Build and try in isolation
 
 ```sh
@@ -48,7 +64,7 @@ Unapproved content remains fully human-visible in `/comms inspect`; model inspec
 - `/comms revoke [exact-session-id]`: remove contact approval after confirmation; queued traffic remains held.
 - `/comms pause`: keep buffering arrivals without peer admission/wakes.
 - `/comms resume`: resume eligible intake.
-- `/comms inspect [message-id]`: read waiting messages or a specific message without consuming/admitting it. The read-only view shows counterpart, subject, full content, references and observed state—not editable JSON. Use arrows/PageUp/PageDown to scroll, **d** for technical evidence, **n/p** for more/previous messages, and **Esc/q** to close. It is a snapshot, not a second inbox. A malformed ID produces a notice rather than opening unrelated messages; an unavailable ID explains the memory-only reset limit. RPC clients use equivalent read-only selections; model/script inspection remains structured.
+- `/comms inspect [message-id]`: read waiting messages or a specific message without consuming/admitting it. The read-only view shows counterpart, subject, full content, references and observed state—not editable JSON. Use arrows/PageUp/PageDown to scroll, **d** for technical evidence, **n/p** for more/previous messages, and **Esc/q** to close. It is a snapshot, not a second inbox. A malformed ID produces a notice rather than opening unrelated messages; an unavailable ID explains the memory-only reset limit. RPC clients use equivalent read-only selections; model inspection is plain text and script results retain structured evidence.
 
 **Stop ends the current run. A queued or later peer message can wake it again. Pause holds incoming peer admission/wakes until Resume.** Pause does not stop existing work or retract admitted content. Stop/corrections do not roll back effects already performed.
 
@@ -58,12 +74,24 @@ Native inline cards show one counterpart/subject heading followed by the full pa
 
 - `comms_peers({})`: approved online peers first, other online peers marked approval-required, then known offline peers. Includes collaboration context and observed activity where available. `view: "known"` filters to approved peers. Discovery never contacts anyone. If none are reachable, check that all participants load pi-comms and share its broker agent directory; intercom-only sessions are not bridged.
 - `comms_message({to, subject, text, refs?, corrects?})`: start an exchange using a native ID or current exact unique name; first contact asks the requester and continues this send if allowed. Do not ask the user to preconfigure contacts. Cancellation sends nothing; do not retry unless the user asks.
-- `comms_message({respondTo, text, refs?, corrects?})`: answer the clearly labelled **reusable** return handle after turns/tools; it is not consumed by a reply. Omit `to` and `subject`. Handles may be lost on reload/switch/restart; no preflight or blocking ask is required.
+- `comms_message({respondTo, text, refs?, corrects?})`: answer the clearly labelled **reusable** return handle after turns/tools; it is not consumed by a reply. Omit `to` and `subject`. Handles may be lost on reload/switch/restart; no preflight is required.
+- `comms_ask({requests:[messageInput,...],timeoutSeconds?})`: one to 30 independent new-message or respondTo requests. Dispatches approved requests without waiting for earlier answers, including under serial host tool scheduling. Each item returns its first exact linked reply, refusal/error, timeout or local ending; one item does not cancel siblings. Multiple ask calls may overlap.
+- `comms_inspect({requests:[outgoingMessageId,...]})`: who replied to each selected request and the latest reply, plus response count. An older response in the same exchange does not answer a newer request. Distinguishes no reply yet, rejected, unknown and unavailable records; never infers task completion. Use the exchange for full history.
 - `comms_inspect({})`: compact overview of waiting intake, paused/receiving state, recent exchanges and uncertain outgoing operations.
 - `comms_inspect({peer,cursor?})`: list a peer's exchanges with latest activity/preview; peer accepts a native ID or current exact unique name.
 - `comms_inspect({message})`, `({exchange,cursor?})`, `({queue:"self",cursor?})`, `({outbox:"self",cursor?})`: non-consuming runtime evidence. Use only one selector. All model views withhold unapproved/revoked incoming payloads and handles. Not a polling duty.
 
 Provider declarations expose described top-level fields. Runtime checks enforce mutually exclusive send/reply and inspection selectors; unknown fields still reject. An exact unique name resolves **once** to its native ID before validation/approval. Ambiguous names return explicit native-ID choices; no fuzzy/prefix matching or name substitution while waiting or retrying. Corrections reference the sender's prior message to the same peer. References are pointers, never uploads. Messages over 900,000 serialized bytes reject with a reference-based next step. Inspection pages retain full approved items and return a cursor. `localTransport.connectivity` describes this session's broker connection, not the counterpart's presence; use `comms_peers` for exact colleague presence. Multiple replies are allowed, not owed. Incoming model text puts sender/subject and full payload first, then `Reply with respondTo: "<handle>"`. Successful send text is concise; full structured records remain available to scripts and inspection.
+
+### Ask timing and interruption
+
+The default wait is **60 seconds**, configurable per call from **0.1 to 600 seconds**. These are practical bounds, not validated UX timing. Each item's clock starts when its send returns transport acceptance, after its contact decision. Human-dialog time is excluded, including another item's queued contact decision; an already running clock resumes with its remaining time. No timeout resends or cancels anything remotely. A clarification counts as the first reply, not completed work; use its reusable handle for another round.
+
+Matched replies can enter the ask result while this session is busy with that ask, but not ahead of pending human input/drafts, Pause or contact approval/revocation. Stop/human interruption, Pause, revoke, disconnect and runtime replacement end affected local waits. Replies not yet handed off remain queued for eligible intake; late replies follow ordinary intake. No claim is made that a remote task continues running.
+
+Direct native ask replies stay claimed until model-context admission: they are not also posted as unsolicited batches. If interrupted before admission, the old tool result is projected without the withheld answer and the answer remains queued. Nested tool calls hand structured results to their calling tool instead; that caller owns any subsequent transformation or omission. This handoff is not evidence of a saved child transcript entry or cognitive receipt. Full underlying messages remain inspectable in existing runtime records. Saved evidence is recorded only when a native session entry is observed. A local busy label means **this session is working; incoming messages are buffered**, not that a peer is doing the requested task.
+
+### Recovery
 
 Same-ID reconnect refresh is internal: after a definite stale-epoch rejection, re-resolve only that same native ID once and recheck approval. Unknown send outcome never automatically retries. Concurrent active claims are rejected explicitly. A fork/new session has a different identity. Renaming a session updates discovery and contact labels without changing its native ID or approval binding; clearing its name restores the UUID display fallback.
 
@@ -71,11 +99,11 @@ Same-ID reconnect refresh is internal: after a definite stale-epoch rejection, r
 
 - **Accepted:** broker/socket transport accepted it. Not proof the recipient model saw it.
 - **Queued:** receiver memory holds it.
-- **Posted:** handed to native Pi.
+- **Posted:** handed to native Pi, admitted as a direct ask result, or handed to a nested caller; the fact's source distinguishes these boundaries.
 - **Saved:** a native session entry was actually observed locally.
 - **Response:** a linked peer message exists. None of these means work completed.
 
-No crash durability. Approvals, buffers, message/outbox records and return handles reset on reload, session switch or process restart. Resuming the same saved session preserves its native address, not lost runtime linkage/approval. The next contact attempt asks for approval again; report context lost/unknown instead of inventing recovery. The broker retains legacy best-effort mailbox behavior internally, but the public exact-send path rejects unavailable peers instead of promising offline delivery.
+No crash durability. Approvals, buffers, local asks, message/outbox records and return handles reset on reload, session switch or process restart. Resuming the same saved session preserves its native address, not lost runtime linkage/approval. The next contact attempt asks for approval again; report context lost/unknown instead of inventing recovery. The broker retains legacy best-effort mailbox behavior internally, but the public exact-send path rejects unavailable peers instead of promising offline delivery.
 
 ## Update and rollback
 

@@ -1,7 +1,11 @@
 {
   "name": "pi-comms",
   "version": "0.1.0",
-  "private": true,
+  "author": "Tran Hoang Nguyen",
+  "repository": { "type": "git", "url": "git+https://github.com/tranhoangnguyen03/pi-comms.git" },
+  "homepage": "https://github.com/tranhoangnguyen03/pi-comms#readme",
+  "bugs": { "url": "https://github.com/tranhoangnguyen03/pi-comms/issues" },
+  "publishConfig": { "access": "public" },
   "license": "MIT",
   "keywords": [
     "pi-package"
@@ -17,6 +21,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "THIRD-PARTY-NOTICES.md",
     "docs/BASE-3.md"
@@ -30,7 +35,7 @@
   "description": "User-approved, exact-session Pi communication with human-first batching",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "verify": "npm run prepare:fixture && npm run build && npm run check && npm test && npm run test:original && npm run test:artifact",
+    "verify": "node .github/scripts/release-utils.mjs selftest && npm run prepare:fixture && npm run build && npm run check && npm test && npm run test:original && npm run test:artifact",
     "check": "tsc --noEmit --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --allowImportingTsExtensions src/extension.ts",
     "test:artifact": "node scripts/test-artifact.mjs",
     "prepack": "npm run build",

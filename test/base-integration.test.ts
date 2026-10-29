@@ -840,3 +840,26 @@ test('active ask ends promptly on Pause, peer revoke, stop and native session re
     }
   } finally { await b.close(); await a.close(); }
 });
+
+test('ask retains unadmitted replies while a human revoke decision is open', async () => {
+  const a = await participant('review-hold-a'), b = await participant('review-hold-b');
+  let release: (() => void) | undefined;
+  try {
+    a.confirm(true);
+    b.responses([context => call('comms_message', { respondTo: text(context.messages).match(/Reply with respondTo: "([0-9a-f-]{36})"/)![1], text: 'REVIEW_HELD_PAYLOAD' }), fauxAssistantMessage('Done.')]);
+    a.responses([call('comms_ask', { requests: [{ to: b.id(), subject: 'Boundary', text: 'question' }], timeoutSeconds: 2 }), fauxAssistantMessage('continued')]);
+    let inspection: Promise<unknown> | undefined;
+    const unsubscribe = a.runtime.session.subscribe(event => {
+      if (event.type === 'tool_execution_end' && event.toolName === 'comms_ask') {
+        // Open an unrelated approval dialog after ask resolution, before its context handoff.
+        a.confirm(() => new Promise(resolve => { release = () => resolve(false); }));
+        inspection = a.command(`revoke ${b.id()}`);
+      }
+    });
+    await a.runtime.session.prompt('Ask.'); unsubscribe();
+    assert.ok(release, 'human revoke decision is open');
+    const leaked = a.observed.slice(1).some(m => text(m).includes('REVIEW_HELD_PAYLOAD'));
+    release?.(); await inspection;
+    assert.equal(leaked, false, 'unadmitted ask payload must remain held during the human decision');
+  } finally { release?.(); await b.close(); await a.close(); }
+});

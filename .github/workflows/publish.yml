@@ -1,0 +1,88 @@
+name: release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+concurrency:
+  group: release
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run verify
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Read version and pin tagged source
+        id: version
+        run: |
+          set -eu
+          V=$(node -p "require('./package.json').version")
+          echo "value=$V" >> "$GITHUB_OUTPUT"
+          TAG="v$V"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            git tag -a "$TAG" -m "pi-comms $TAG"
+            git push origin "$TAG"
+          fi
+          git checkout "$TAG"
+          test "$(node -p "require('./package.json').version")" = "$V"
+      # pi-comms ships generated bundles, unlike pi-bro's source-only package.
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - name: Pack tagged tree
+        run: npm pack --ignore-scripts
+      - name: Publish to npm using trusted publishing
+        env:
+          V: ${{ steps.version.outputs.value }}
+        run: |
+          set -eu
+          if npm view "pi-comms@$V" version >/dev/null 2>&1; then
+            echo "npm already has $V"
+          else
+            npm publish "pi-comms-$V.tgz" --access public --provenance --ignore-scripts
+          fi
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.version.outputs.value }}
+        run: |
+          set -eu
+          TAG="v$V"
+          if gh release view "$TAG" >/dev/null 2>&1; then exit 0; fi
+          found=''
+          for attempt in $(seq 1 36); do
+            if npm view "pi-comms@$V" version >/dev/null 2>&1; then found=1; break; fi
+            sleep 5
+          done
+          test -n "$found"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const lines = fs.readFileSync("CHANGELOG.md", "utf8").split("\n");
+            const start = lines.findIndex(l => l.startsWith(`## [${process.env.V}]`));
+            if (start < 0) throw new Error("Missing release notes");
+            const end = lines.findIndex((l, i) => i > start && l.startsWith("## ["));
+            fs.writeFileSync(process.env.RUNNER_TEMP + "/notes.md", lines.slice(start + 1, end < 0 ? undefined : end).join("\n").trim());
+          '
+          gh release create "$TAG" "pi-comms-$V.tgz" --title "pi-comms $TAG" --notes-file "$RUNNER_TEMP/notes.md"

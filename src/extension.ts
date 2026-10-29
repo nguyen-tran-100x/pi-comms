@@ -431,7 +431,7 @@ export default function comms(pi: ExtensionAPI) {
   // are handed to their caller instead; the caller owns its subsequent projection.
   pi.on('tool_result', (event, context) => {
     if (event.toolName !== 'comms_ask' || !asks?.has(event.toolCallId)) return;
-    if (context.signal?.aborted) asks.end('interrupted', event.toolCallId);
+    if (context.signal?.aborted || approvalDialog) asks.end('interrupted', event.toolCallId);
     admitAsks();
     const output = result(asks.project(event.toolCallId, Number(event.input.timeoutSeconds ?? 60)));
     if (event.parentToolCallId) asks.present(event.toolCallId, 'ask result handed to nested caller');
@@ -439,7 +439,7 @@ export default function comms(pi: ExtensionAPI) {
   });
   pi.on('context', (event, context) => {
     if (!asks) return;
-    if (context.signal?.aborted) endAsks('interrupted');
+    if (context.signal?.aborted || approvalDialog) endAsks('interrupted');
     admitAsks();
     return { messages: event.messages.map(message => {
       if (message.role !== 'toolResult' || message.toolName !== 'comms_ask' || !asks!.has(message.toolCallId)) return message;

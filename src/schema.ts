@@ -13,8 +13,14 @@ export const MessageInput = Type.Object({
   corrects: Type.Optional(Type.String({ ...Id, description: 'Your earlier message ID to this same peer, when correcting it.' })),
 }, { additionalProperties: false });
 export type MessageInput = Static<typeof MessageInput>;
+export const AskInput = Type.Object({
+  requests: Type.Array(MessageInput, { minItems: 1, maxItems: 30, description: 'Independent requests dispatched before waiting. One question is a one-item array.' }),
+  timeoutSeconds: Type.Optional(Type.Number({ minimum: 0.1, maximum: 600, description: 'Per-request reply wait, default 60 seconds; starts after transport acceptance, excluding approval time.' })),
+}, { additionalProperties: false });
+export type AskInput = Static<typeof AskInput>;
 export const PeersInput = Type.Object({ view: Type.Optional(Type.Union([Type.Literal('known'), Type.Literal('all')], { description: 'Default all: approved online, other online, then known offline peers. Known filters to approved peers.' })), cursor: Type.Optional(Id) }, { additionalProperties: false });
 export const InspectInput = Type.Object({
+  requests: Type.Optional(Type.Array(Id, { minItems: 1, maxItems: 30, description: 'Exact outgoing message IDs: response progress for each request, not task completion.' })),
   message: Type.Optional(Type.String({ ...Id, description: 'Inspect one message and its evidence.' })),
   exchange: Type.Optional(Type.String({ ...Id, description: 'Inspect messages in one exchange.' })),
   peer: Type.Optional(Type.String({ ...Text, description: 'Native ID or current exact unique name; list this peer’s exchanges.' })),
@@ -36,10 +42,11 @@ export function validate(schema: TSchema, value: unknown) {
     const input = value as MessageInput;
     if (input.respondTo ? input.to !== undefined || input.subject !== undefined : !input.to || !input.subject) throw new Error('INVALID_INPUT: supply to and subject OR respondTo');
   }
+  if (schema === AskInput) for (const request of (value as AskInput).requests) validate(MessageInput, request);
   if (schema === InspectInput) {
     const input = value as InspectInput;
-    const selectors = ['message', 'exchange', 'peer', 'queue', 'outbox'].filter(key => key in input);
-    if (selectors.length > 1 || (input.cursor && (!selectors.length || input.message))) throw new Error('INVALID_INPUT: use one selector; cursor requires a paged view');
+    const selectors = ['message', 'exchange', 'peer', 'queue', 'outbox', 'requests'].filter(key => key in input);
+    if (selectors.length > 1 || (input.cursor && (!selectors.length || input.message || input.requests))) throw new Error('INVALID_INPUT: use one selector; cursor requires a paged view');
   }
 }
 // Below the reused transport's 1 MiB frame bound, including routing metadata.

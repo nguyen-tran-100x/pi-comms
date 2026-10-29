@@ -1,6 +1,35 @@
 # Base #3 — local implementation and verification
 
-## Current contract: round-one usability pass (#9)
+## Current contract: round-two send/ask pass (#11)
+
+2026-10-29. Implements [issue #11](https://github.com/tranhoangnguyen03/pi-comms/issues/11) on separate branch `feat/round-two-ask-11`, based on reviewed PR #10 head `b0bf64ab927dcf9b3955b548ebbb85a4df780ab3`. PR #10 is not rewritten or merged. The [README](../README.md) is the current usage guide; earlier dated observations below remain historical.
+
+### Changes
+
+- `comms_message` remains asynchronous send/reply. `comms_ask` accepts 1–30 independent requests in one call, dispatching before waiting even with serial host tool scheduling. Multiple asks can overlap. Each item records its exact outgoing ID and pinned native peer before transport dispatch; only a valid reply linked to that request settles it. Refusal/error/timeout affects that item, not siblings.
+- Configurable reply timeout: default 60 seconds, range 0.1–600. Each clock begins at transport acceptance, excluding human-dialog time. These practical defaults are not human-validated timing. First reply may be clarification; no task-completion inference. No automatic resend, cancellation message or claim that remote work is still running.
+- Approved matching replies use the ask result path without deadlocking on their own busy session. Human pending input/drafts, approval dialogs, Pause and sticky revoke still control intake. Stop/interruption, Pause, revoke, disconnect and runtime replacement end affected waits and clean timers. Correlation/return handles remain usable for late responses during the runtime lifetime.
+- Reply claims are temporary execution state, not a second evidence store. Full messages remain in Runtime. Direct results are claimed until native model-context admission. Interruption before that releases the claim and removes the answer from the old ask projection, retaining it for ordinary eligible intake. Nested calls remain supported: their structured result is handed to the calling tool, which owns subsequent transformation. Handoff does not prove saved child transcript, model understanding or completed work. Observed facts identify their boundary/source.
+- `comms_inspect({requests:[...]})` derives exact-request response progress from existing message links, showing the latest relevant reply and response count. It distinguishes reply received, no reply yet, rejected, unknown and context lost. Older replies in the same exchange do not count against a newer request. No task ledger or inferred obligation/read state.
+- Peers, send, ask and inspection provide plain-text model outputs with structured details retained. Common outputs preserve full selected payload, attribution, reply handles, message/exchange pointers and pagination. Human collapsed ask cards show every item's outcome; expansion keeps full evidence. Busy means this local session is working and buffering, not peer task progress.
+- Agent guidance explicitly forbids courtesy/formality/ack-only/closing traffic. No keyword filters, automatic acknowledgements, room/group system, persistence expansion, new agents or paid calls were added.
+
+### Verification and limits
+
+`npm run verify` passes: **69/69 combined tests** (42 Base + 27 historical/prototype), **32/32 separate pinned upstream regressions**, **21/21 temporary installed-artifact scenarios**. Production TypeScript and diff whitespace checks pass. The added native scenarios run the compiled extension and isolated broker through Pi 1.4.0 with local scripted providers; no model network calls or real credentials.
+
+Coverage includes serial-host multi-request dispatch, overlapping asks, immediate replies before transport returns, exact-request linkage, partial reply/error/timeout, independent refusal, own/sibling approval timing, late replies, reusable follow-ups, Pause/revoke/Stop/switch, privacy, provider schema, nested caller composition, plain-text/structured parity and collapsed human rendering. The cancellation-boundary regression aborts at native `tool_execution_end` after ask resolves but before the next model request: the reply remains queued, is later presented once, and the old tool-result projection no longer duplicates it. Promise resolution alone is not asserted to prove model admission. Existing unknown-send and reconnect protections remain covered.
+
+| Scenario | Round-two change | Scripted verification |
+|---|---|---|
+| C asks for a status | One ask returns a first linked reply; no courtesy guidance loop | Single-request ask and reusable reply path; real-model compliance not claimed |
+| A requests three reviews | One call dispatches all; partial result names missing reviewer | Serial host, two linked answers, third timeout, separate unavailable target; old request inspection remains available |
+| B conducts multiple rounds | Reply handles remain reusable; exact-request progress distinguishes rounds | Same-exchange old reply cannot settle a newer ask; interruption retains unadmitted response |
+| Common output | Plain prose replaces JSON/receipt boilerplate | Model projection assertions and native tool-card rendering are separate checks |
+
+**Remaining acceptance:** owner-observed real-model C/A/B runs and actual human collapsed-card readability are not established by these fixtures. Generic nested callers may omit/transform outputs; the contract promises handoff, not cognitive receipt. All execution state is memory-only; reload/restart does not promise replay. Publication route for this follow-up must be confirmed separately; no normal installation, merge or release is authorized.
+
+## Historical round-one usability pass (#9)
 
 2026-10-29, based on main `162e536b45074ab2739ba3f0b604d1b2885a47f5` after PR #8. This local review candidate implements the six changes authorized in [issue #9](https://github.com/tranhoangnguyen03/pi-comms/issues/9). The [README](../README.md) is the current usage guide. The dated Base implementation and evaluation sections below are historical evidence, not current requirements where #9 changes them.
 

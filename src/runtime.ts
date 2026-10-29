@@ -39,13 +39,14 @@ export class Runtime {
     if (input.corrects && (!correction || correction.from !== this.self || correction.to !== to)) throw new Error('INVALID_INPUT: correction must reference your message to this exact peer');
     return { to, source };
   }
-  async send(input: MessageInput) {
+  async send(input: MessageInput, registered?: (entry: Entry) => void) {
     const { to, source } = this.contactFor(input);
     if (!this.isApproved(to)) throw new Error('CONTACT_NOT_APPROVED');
     const envelope: Envelope = { id: randomUUID(), exchange: source?.exchange ?? randomUUID(), subject: source?.subject ?? ('subject' in input ? input.subject : ''), text: input.text, refs: input.refs ?? [], replyTo: source?.id ?? null, corrects: input.corrects ?? null, createdAt: new Date().toISOString() };
     checkSize(envelope, this.approval(to)?.context);
     const entry: Entry = { message: { ...envelope, from: this.self, to }, facts: [], state: 'unknown' };
     this.records.set(envelope.id, entry);
+    registered?.(entry);
     let outcome: Attempt;
     try { outcome = await this.transport(to, envelope); } catch { outcome = { outcome: 'unknown', code: 'OUTCOME_UNKNOWN' }; }
     entry.state = outcome.outcome; entry.code = outcome.code;
@@ -79,10 +80,10 @@ export class Runtime {
     return true;
   }
   eligible() { return this.waiting.filter(id => this.isApproved(this.records.get(id)!.message.from)); }
-  posted(ids: string[]) {
+  posted(ids: string[], source = 'native Pi sendMessage') {
     const posted = new Set(ids);
     this.waiting = this.waiting.filter(id => !posted.has(id));
-    ids.forEach(id => this.fact(id, 'posted', 'native Pi sendMessage'));
+    ids.forEach(id => this.fact(id, 'posted', source));
   }
   private visible(entry: Entry, audience: 'agent' | 'human') { return audience === 'human' || entry.message.from === this.self || this.isApproved(entry.message.from); }
   private project(entry: Entry, audience: 'agent' | 'human') {
@@ -116,6 +117,14 @@ export class Runtime {
       return this.project(entry, audience);
     }
     const records = [...this.records.values()];
+    if (input.requests) return { responses: input.requests.map(id => {
+      const request = this.records.get(id);
+      if (!request || request.message.from !== this.self) return { request: id, outcome: 'context-lost' };
+      const replies = records.filter(entry => entry.message.replyTo === id && entry.message.from === request.message.to);
+      return { request: id, peer: request.message.to, subject: request.message.subject, state: request.state,
+        code: request.code, outcome: replies.length ? 'reply-received' : request.state === 'accepted' ? 'no-reply-yet' : request.state,
+        responseCount: replies.length, replies: replies.slice(-1).map(entry => this.project(entry, audience)) };
+    }) };
     if (input.peer || !input.exchange && !input.queue && !input.outbox) {
       const latest = new Map<string, Entry>();
       for (const entry of records) {

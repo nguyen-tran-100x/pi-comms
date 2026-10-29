@@ -386,6 +386,35 @@ test('revoked paused contact is recoverable through the same requests command ad
   } finally { await b?.close(); await a?.close(); }
 });
 
+test('human inspection distinguishes queue, malformed ID and unavailable runtime record without changing messages', async () => {
+  let a: Awaited<ReturnType<typeof participant>> | undefined, b: Awaited<ReturnType<typeof participant>> | undefined;
+  try {
+    a = await participant('inspect-id-sender'); b = await participant('inspect-id-receiver');
+    a.confirm(true); await b.command('pause');
+    const sent = data(await a.tool('comms_message', { to: b.id(), subject: 'Inspect safely', text: 'UNCHANGED_HELD_MESSAGE' })).data;
+    await waitFor(() => b!.notifications.some(n => /Contact request from/.test(n)));
+    const before = data(await b.tool('comms_inspect', { queue: 'self' })).data.items.map((e: any) => e.message.id);
+    const views = b.inspectedByHuman.length;
+    await b.command('inspect not-a-message-id');
+    assert.equal(b.inspectedByHuman.length, views, 'malformed ID must not open unrelated waiting messages');
+    assert.match(b.notifications.at(-1)!, /valid message ID/i);
+    await b.command('inspect 00000000-0000-0000-0000-000000000000');
+    assert.equal(b.inspectedByHuman.length, views);
+    assert.match(b.notifications.at(-1)!, /not available|unavailable/i);
+    assert.match(b.notifications.at(-1)!, /reload.*switch.*restart/i);
+    await b.command('inspect'); assert.equal(b.inspectedByHuman.length, views + 1);
+    assert.match(b.inspectedByHuman.at(-1)!, /UNCHANGED_HELD_MESSAGE/);
+    await b.command(`inspect ${sent.message.id}`); assert.equal(b.inspectedByHuman.length, views + 2);
+    assert.match(b.inspectedByHuman.at(-1)!, /UNCHANGED_HELD_MESSAGE/);
+    assert.deepEqual(data(await b.tool('comms_inspect', { queue: 'self' })).data.items.map((e: any) => e.message.id), before);
+    assert.equal(b.observed.length, 0, 'inspection neither approves nor admits the held content');
+    await b.runtime.newSession();
+    await b.command(`inspect ${sent.message.id}`);
+    assert.equal(b.inspectedByHuman.length, views + 2, 'a real reset also reports missing evidence without opening another view');
+    assert.match(b.notifications.at(-1)!, /not available|unavailable/i);
+  } finally { await b?.close(); await a?.close(); }
+});
+
 test('packaged extension: first-run approval, exact wire, delayed replies, Stop/Pause, native switch/resume/fork', async () => {
   let a: Awaited<ReturnType<typeof participant>> | undefined;
   let b: Awaited<ReturnType<typeof participant>> | undefined;

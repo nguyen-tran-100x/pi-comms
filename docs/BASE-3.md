@@ -19,10 +19,10 @@ Date: 2026-10-28. Starting revision: `bbafcce4896f515204dd6da04a626c46f2bd358c`,
 Environment: macOS arm64, Node 22.23.3, Pi 1.4.0.
 
 - `npm run check`: production source TypeScript check passes.
-- `npm run test:base`: 22/22 pass. Includes actual compiled extension loaded by native resource loader; isolated broker and two real Pi sessions with a scripted local faux provider.
-- `npm test`: 49/49 pass: 22 Base tests plus 27 historical/prototype spike tests. These are not 49 tests of the production implementation.
+- `npm run test:base`: 24/24 pass. Includes actual compiled extension loaded by native resource loader; isolated broker and two real Pi sessions with a scripted local faux provider.
+- `npm test`: 51/51 pass: 24 Base tests plus 27 historical/prototype spike tests. These are not 51 tests of the production implementation.
 - `npm run test:original`: 32/32 pinned upstream regression tests pass.
-- `npm run test:artifact`: builds/packs, installs tarball into a temporary prefix with peers omitted, loads via real Pi resource loader, then reruns 8 native Base integration scenarios against the installed artifact. No normal environment installation.
+- `npm run test:artifact`: builds/packs, installs tarball into a temporary prefix with peers omitted, loads via real Pi resource loader, then reruns 10 native Base integration/subprocess scenarios against the installed artifact. No normal environment installation.
 - `git diff --check`: passes.
 - Clean temporary checkout: `npm ci --ignore-scripts && npm run verify` passes without pre-existing node_modules, dist or upstream fixture.
 
@@ -51,6 +51,15 @@ Four new native integration scenarios (also rerun from the installed artifact) c
 - Editor-draft and Pause precedence for incoming contact decisions; session replacement cancels an old dialog even if its late result says Allow.
 
 These are deterministic execution/interaction tests, not a claim that an unfamiliar model or the owner has accepted the revised UX. No paid trials repeated. Real-use acceptance is still pending.
+
+## Starter-process shutdown and inspection-ID recovery
+
+Both full-PR review findings were reproduced with failing regressions before repair:
+
+- The detached broker's piped stderr kept its starter process referenced after extension shutdown. Restored unref behavior on the actual Node socket stream, using its public socket type so TypeScript does not erase a necessary lifecycle operation. Startup capture and subsequent draining remain unchanged. The regression launches a separate native Pi starter with the compiled extension, connects a surviving peer, requests normal extension shutdown, and asserts natural starter exit **before** any broker termination. The surviving peer then lists sessions successfully through that same live broker. A separate failed-startup fixture confirms diagnostic stderr is still captured.
+- `/comms inspect` now treats no argument as the waiting queue, rejects malformed IDs with an actionable notice, and explains unavailable records and their reload/switch/restart lifetime. It no longer silently substitutes the queue or sends expected missing-record cases into Pi's generic command-error path. Tests cover malformed ID, valid-but-missing ID, a real session reset, normal queue inspection and an existing message ID, with the queue unchanged and no model admission.
+
+Artifact verification runs the new starter-exit subprocess regression against the temporarily installed extension/broker as well as the native integration suite. The auxiliary startup-diagnostic check calls the source spawn helper; it is not a separate installed-package journey. All subprocess/runtime cleanup occurs after the relevant assertions and only touches owned fixtures. No normal session or installation was modified for these tests. An already-running starter retains any pipe created by the old code; extension reload cannot release that old handle. Retest shutdown with fresh processes after finishing active work, not by reloading an ongoing exchange.
 
 ## Readable human inspection and approval presentation
 

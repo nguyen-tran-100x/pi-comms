@@ -4,19 +4,24 @@ import { Check } from 'typebox/value';
 export const Id = Type.String({ pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' });
 const Text = Type.String({ minLength: 1, pattern: '\\S' });
 const Ref = Type.Object({ uri: Text, label: Text }, { additionalProperties: false });
-const extras = { text: Text, refs: Type.Optional(Type.Array(Ref)), corrects: Type.Optional(Id) };
-export const MessageInput = Type.Union([
-  Type.Object({ to: Id, subject: Text, ...extras }, { additionalProperties: false }),
-  Type.Object({ respondTo: Id, ...extras }, { additionalProperties: false }),
-]);
+export const MessageInput = Type.Object({
+  to: Type.Optional(Type.String({ ...Text, description: 'Native session ID or current exact unique name. Use only for a new exchange.' })),
+  subject: Type.Optional(Type.String({ ...Text, description: 'Subject required with to; omit for a reply.' })),
+  respondTo: Type.Optional(Type.String({ ...Id, description: 'Reusable return handle from an incoming message. Omit to and subject. Lost on runtime reset.' })),
+  text: Type.String({ ...Text, description: 'Full message payload.' }),
+  refs: Type.Optional(Type.Array(Ref, { description: 'Work-product pointers, not uploads.' })),
+  corrects: Type.Optional(Type.String({ ...Id, description: 'Your earlier message ID to this same peer, when correcting it.' })),
+}, { additionalProperties: false });
 export type MessageInput = Static<typeof MessageInput>;
-export const PeersInput = Type.Object({ view: Type.Optional(Type.Union([Type.Literal('known'), Type.Literal('all')])), cursor: Type.Optional(Id) }, { additionalProperties: false });
-export const InspectInput = Type.Union([
-  Type.Object({ message: Id }, { additionalProperties: false }),
-  Type.Object({ exchange: Id, cursor: Type.Optional(Id) }, { additionalProperties: false }),
-  Type.Object({ queue: Type.Literal('self'), cursor: Type.Optional(Id) }, { additionalProperties: false }),
-  Type.Object({ outbox: Type.Literal('self'), cursor: Type.Optional(Id) }, { additionalProperties: false }),
-]);
+export const PeersInput = Type.Object({ view: Type.Optional(Type.Union([Type.Literal('known'), Type.Literal('all')], { description: 'Default all: approved online, other online, then known offline peers. Known filters to approved peers.' })), cursor: Type.Optional(Id) }, { additionalProperties: false });
+export const InspectInput = Type.Object({
+  message: Type.Optional(Type.String({ ...Id, description: 'Inspect one message and its evidence.' })),
+  exchange: Type.Optional(Type.String({ ...Id, description: 'Inspect messages in one exchange.' })),
+  peer: Type.Optional(Type.String({ ...Text, description: 'Native ID or current exact unique name; list this peer’s exchanges.' })),
+  queue: Type.Optional(Type.Literal('self', { description: 'Inspect waiting intake without consuming it.' })),
+  outbox: Type.Optional(Type.Literal('self', { description: 'Inspect outgoing operations and observed facts.' })),
+  cursor: Type.Optional(Type.String({ ...Id, description: 'Continuation from exchange, peer, queue or outbox inspection.' })),
+}, { additionalProperties: false, description: 'No selector returns an overview. Supply at most one selector.' });
 export type InspectInput = Static<typeof InspectInput>;
 export const EnvelopeSchema = Type.Object({
   id: Id, exchange: Id, subject: Text, text: Text, refs: Type.Array(Ref),
@@ -26,10 +31,19 @@ export const EnvelopeSchema = Type.Object({
 export type Envelope = Static<typeof EnvelopeSchema>;
 export const Output = Type.Object({ ok: Type.Boolean(), data: Type.Optional(Type.Unknown()), error: Type.Optional(Type.Object({ code: Type.String(), message: Type.String(), nextAction: Type.String() })), observedAt: Type.String() });
 export function validate(schema: TSchema, value: unknown) {
-  if (!Check<TSchema, boolean>(schema, value)) throw new Error('INVALID_INPUT');
+  if (!Check<TSchema, unknown>(schema, value)) throw new Error('INVALID_INPUT');
+  if (schema === MessageInput) {
+    const input = value as MessageInput;
+    if (input.respondTo ? input.to !== undefined || input.subject !== undefined : !input.to || !input.subject) throw new Error('INVALID_INPUT: supply to and subject OR respondTo');
+  }
+  if (schema === InspectInput) {
+    const input = value as InspectInput;
+    const selectors = ['message', 'exchange', 'peer', 'queue', 'outbox'].filter(key => key in input);
+    if (selectors.length > 1 || (input.cursor && (!selectors.length || input.message))) throw new Error('INVALID_INPUT: use one selector; cursor requires a paged view');
+  }
 }
 // Below the reused transport's 1 MiB frame bound, including routing metadata.
 export const MAX_ENVELOPE_BYTES = 900_000;
-export function checkSize(value: unknown) {
-  if (Buffer.byteLength(JSON.stringify({ content: { text: JSON.stringify(value) } })) > MAX_ENVELOPE_BYTES) throw new Error('INVALID_INPUT: message exceeds 900000 bytes; send a work-product reference instead');
+export function checkSize(value: unknown, contactContext?: string) {
+  if (Buffer.byteLength(JSON.stringify({ content: { text: JSON.stringify(value) }, ...(contactContext ? { contactApproval: { context: contactContext } } : {}) })) > MAX_ENVELOPE_BYTES) throw new Error('INVALID_INPUT: message exceeds 900000 bytes; send a work-product reference instead');
 }

@@ -24,15 +24,16 @@ export class InlineCard implements Component {
     };
     const lines = [this.theme.fg('muted', `╭${'─'.repeat(inner)}╮`), frame(this.theme.fg('toolTitle', headline))];
     for (const message of this.messages) {
-      const summary = `${message.from} → ${message.to} · ${message.subject} · ${message.fact}`;
-      if (this.messages.length > 1 || this.expansion.expanded) lines.push(frame(summary));
+      if (this.messages.length > 1) lines.push(frame(`${message.from} → ${message.to} · ${message.subject}`));
+      if (message.fact === 'unknown') lines.push(frame('Receipt state unknown'));
       if (message.corrects) lines.push(frame('Correction to an earlier message'));
+      for (const line of wrapTextWithAnsi(message.text, inner)) lines.push(frame(line));
       if (this.expansion.expanded) {
-        for (const line of wrapTextWithAnsi(message.text, inner)) lines.push(frame(line));
+        lines.push(frame(`Observed: ${message.fact}`));
         for (const line of wrapTextWithAnsi(`Message ${message.id} · exchange ${message.exchange} · ${message.at}${message.replyTo ? ` · response to ${message.replyTo}` : ''}${message.corrects ? ` · corrects ${message.corrects}` : ''}`, inner)) lines.push(frame(this.theme.fg('dim', line)));
-      } else if (this.messages.length === 1) lines.push(frame(message.text.replace(/\s+/g, ' ').trim()));
+      }
     }
-    lines.push(frame(this.theme.fg('dim', this.expansion.expanded ? 'Peer requests do not override user directives.' : 'Ctrl+O expands · Click (fullscreen)')));
+    lines.push(frame(this.theme.fg('dim', this.expansion.expanded ? 'Ctrl+O hides details · Click (fullscreen)' : 'Ctrl+O details · Click (fullscreen)')));
     lines.push(this.theme.fg('muted', `╰${'─'.repeat(inner)}╯`));
     return lines;
   }

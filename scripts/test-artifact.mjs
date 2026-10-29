@@ -28,6 +28,6 @@ await loader.reload();
 const result = loader.getExtensions(); assert.deepEqual(result.errors, []); assert.equal(result.extensions.length, 1); console.log('Installed artifact loaded by Pi 1.4.0');`;
   const file = join(root, 'probe.mjs'); writeFileSync(file, probe);
   execFileSync(process.execPath, [file], { env: { ...process.env, PI_CODING_AGENT_DIR: join(root, 'agent') }, stdio: 'inherit' });
-  execFileSync(process.execPath, ['--import', 'tsx', '--test', 'test/base-integration.test.ts'], { env: { ...process.env, PI_COMMS_TEST_EXTENSION: join(installed, 'dist/extension.js') }, stdio: 'inherit' });
+  execFileSync(process.execPath, ['--import', 'tsx', '--test', '--test-concurrency=1', 'test/base-integration.test.ts', 'test/base-shutdown.test.ts'], { env: { ...process.env, PI_COMMS_TEST_EXTENSION: join(installed, 'dist/extension.js') }, stdio: 'inherit' });
   console.log(`Verified ${pack.filename}: ${pack.size} packed bytes; ${pack.unpackedSize} unpacked bytes`);
 } finally { rmSync(root, { recursive: true, force: true }); }

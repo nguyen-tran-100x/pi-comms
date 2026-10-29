@@ -272,9 +272,14 @@ export default function comms(pi: ExtensionAPI) {
     }
     if (action === 'inspect') {
       const current = runtime;
+      if (id !== undefined) {
+        try { validate(Id, id); }
+        catch { commandCtx.ui.notify('That is not a valid message ID. Use an exact message ID, or /comms inspect with no ID to view waiting messages.', 'warning'); return; }
+        if (!current.entry(id)) { commandCtx.ui.notify('That message is not available in this runtime. Records are memory-only and reset on reload, session switch or restart. /comms inspect with no ID shows what is waiting now.', 'info'); return; }
+      }
       observeSaved(); approvalDialog = true;
       try {
-        await showInspection(commandCtx, cursor => id && /^[0-9a-f-]{36}$/i.test(id) ? current.inspect({ message: id }, 'human') : current.inspect({ queue: 'self', ...(cursor ? { cursor } : {}) }, 'human'), { self: current.self, name, approved: current.isApproved }, lifetime.signal);
+        await showInspection(commandCtx, cursor => id !== undefined ? current.inspect({ message: id }, 'human') : current.inspect({ queue: 'self', ...(cursor ? { cursor } : {}) }, 'human'), { self: current.self, name, approved: current.isApproved }, lifetime.signal);
       } finally { approvalDialog = false; }
       return;
     }

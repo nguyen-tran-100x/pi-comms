@@ -98,6 +98,8 @@ export async function spawnBrokerIfNeeded(brokerURL: URL): Promise<void> {
       return cause === undefined ? new Error(errorMessage) : new Error(errorMessage, { cause });
     };
     child.stderr?.on("data", rememberBrokerStderr);
+    // The detached broker's diagnostic pipe must not keep its starter alive.
+    if (child.stderr instanceof net.Socket) child.stderr.unref();
     child.unref();
 
     await new Promise<void>((resolve, reject) => {

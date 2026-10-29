@@ -5,7 +5,7 @@ import { writeMessage, createMessageReader } from "./framing.ts";
 import { getBrokerConnectTarget, type BrokerConnectTarget } from "./paths.ts";
 import { isMessage, isMessageControl, isMessageReceipt, isSessionInfo } from "./protocol.ts";
 import { getIntercomScopeId } from "../config.ts";
-import { EXACT_SEND_FEATURE, EXTENSION_BUS_FEATURE, SESSION_HELD_ERROR_CODE, type DeliveryDetails } from "../types.ts";
+import { CONTACT_APPROVAL_FEATURE, type ContactApproval, EXACT_SEND_FEATURE, EXTENSION_BUS_FEATURE, SESSION_HELD_ERROR_CODE, type DeliveryDetails } from "../types.ts";
 import type {
   Attachment,
   BrokerMessage,
@@ -380,7 +380,9 @@ export class IntercomClient extends EventEmitter {
           throw new Error("Invalid message event");
         }
 
-        this.emit("message", from, message);
+        const approval = brokerMessage.contactApproval as ContactApproval | undefined;
+        if (approval !== undefined && (typeof approval !== 'object' || approval === null || typeof approval.context !== 'string' || !approval.context.trim())) throw new Error('Invalid contact approval');
+        this.emit("message", from, message, approval);
         break;
       }
 
@@ -635,7 +637,8 @@ export class IntercomClient extends EventEmitter {
     });
   }
 
-  async sendExact(to: string, epoch: string, options: SendOptions): Promise<SendResult> {
+  async sendExact(to: string, epoch: string, options: SendOptions, contactApproval?: ContactApproval): Promise<SendResult> {
+    if (contactApproval && !this.supportsFeature(CONTACT_APPROVAL_FEATURE)) throw new Error('UNSUPPORTED_CAPABILITY');
     let socket: net.Socket;
     try {
       socket = this.requireActiveSocket();
@@ -678,7 +681,7 @@ export class IntercomClient extends EventEmitter {
       this.pendingSends.set(messageId, { resolve: wrappedResolve, reject: wrappedReject });
 
       try {
-        writeMessage(socket, { type: "send", to, message, ...(targetId && targetEpoch ? { targetId, targetEpoch } : {}) });
+        writeMessage(socket, { type: "send", to, message, ...(targetId && targetEpoch ? { targetId, targetEpoch } : {}), ...(contactApproval ? { contactApproval } : {}) });
       } catch (error) {
         clearTimeout(timeout);
         this.pendingSends.delete(messageId);

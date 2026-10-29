@@ -1,5 +1,52 @@
 # Base #3 — local implementation and verification
 
+## Current contract: round-one usability pass (#9)
+
+2026-10-29, based on main `162e536b45074ab2739ba3f0b604d1b2885a47f5` after PR #8. This local review candidate implements the six changes authorized in [issue #9](https://github.com/tranhoangnguyen03/pi-comms/issues/9). The [README](../README.md) is the current usage guide. The dated Base implementation and evaluation sections below are historical evidence, not current requirements where #9 changes them.
+
+### Blueprint/contract reconciliation
+
+Issue #9 supersedes the earlier [blueprint #1](https://github.com/tranhoangnguyen03/pi-comms/issues/1) and [Base #3](https://github.com/tranhoangnguyen03/pi-comms/issues/3) choices in these six areas:
+
+1. **Requester-only approval.** A native human confirmation authorizes the exact counterpart and normal replies for that collaboration. The runtime adds contact context outside the model envelope; the broker forwards it only on the exact ID/endpoint path and supplies sender identity from registration. The receiver accepts without a second prompt. No agent schema exposes an approval flag. Approval does not confer tool execution, authorize unrelated work or extend A↔B to B↔C. This is a same-owner local trust model, not isolation from malicious same-account processes.
+2. **Serialized human decisions, independent sends.** Concurrent requests wait for their own decisions rather than returning `CONTACT_APPROVAL_PENDING`. Rejection, Stop and session replacement cancel without sending. An explicit revoke command with an ID cancels pending sends for that contact before its confirmation; cancelling that confirmation does not restart those sends. Receiver refusal/revocation is sticky until explicit local reapproval; ordinary retransmission cannot undo it. Pause continues to hold admission/wakes.
+3. **Useful default discovery.** Approved online peers, other online peers marked approval-required, then known offline peers. Collaboration context and observed activity are available. `view: known` remains an explicit filter. Empty discovery explains the shared agent-directory/pi-comms requirement and absence of a legacy intercom bridge. Broker location appears in status, not message cards.
+4. **Overview and peer navigation.** Empty `comms_inspect({})` shows waiting count, Pause, recent exchanges and uncertain outgoing operations. `peer` lists exchanges with previews; `exchange` retains full history. Summaries derive from existing runtime records, not another store. All agent projections withhold unapproved/revoked incoming payloads and handles. Described top-level optional properties replace root unions; runtime validation still rejects mutually exclusive selectors and malformed/unknown fields before sending.
+5. **Payload-first projections.** Human cards contain one sender→recipient/subject heading and full payload; details reveal IDs, timestamps and observed receipts. Model messages contain sender/subject, full payload and `Reply with respondTo: "<handle>" (reusable)`. Corrections/context loss remain explicit. Tool/session guidance carries user precedence; no repeated governance paragraph. Successful send text is concise; scripts and inspect retain structured evidence. Handles survive replies/turns, not necessarily reload/switch/restart. Accepted remains transport evidence, not read/completion.
+6. **Exact unique-name convenience.** Names resolve once to native IDs before approval. Ambiguity lists exact choices, with no fuzzy/prefix routing. Rename/rebinding during approval cannot substitute another session. Same-ID endpoint refresh remains internal; uncertain outcomes are not retried. Text claiming a role/name is not transport identity.
+
+Requester-only approval needs the `owner-contact-v1` broker capability and matching participant artifacts. Finish outstanding work and restart the isolated participants/broker together when replacing an older artifact; no normal installation is changed by verification. Approval context shares the existing serialized-size budget, so oversized routing metadata rejects before creating an outgoing operation.
+
+### Reproduction and verification
+
+Before implementation, the 24 existing Base tests passed while four new regression checks failed on empty inspection, missing top-level provider fields, duplicated expanded-card heading and concurrent approval failure. Schema reproduction used Pi 1.4.0's real Google converter (JSON Schema and legacy parameters modes). The exact reported uppercase `OBJECT` transformation was **not** reproduced; it remains a provider-specific observation, not a claimed root cause.
+
+The revised compiled extension is also loaded in native Pi sessions and its actual model context is serialized through the OpenAI Responses provider. The request is intercepted before network access with a synthetic credential; assertions inspect both normal and incremental tool declarations. No external model call or existing credential is used. The original role/name mismatch lacked a source trace; a synthetic payload-identity claim and name-rebinding regression show correct transport attribution, not proof of the original incident's cause. No role-alias system was added.
+
+Verification on macOS arm64, Node 22.23.3, Pi 1.4.0:
+
+- Production TypeScript and `git diff --check` pass.
+- Base regressions cover requester-only intake, independent approval/cancellation, pending revoke, scope isolation, exact-name ambiguity/rebinding, peer→exchange navigation, revoked overview/privacy, provider serialization, full cards, reusable return handles, draft/Pause/Stop/switch behavior and unknown-outcome reporting.
+- `npm run verify`: **59/59 combined tests** (32 Base + 27 historical/prototype), **32/32 separate pinned upstream regressions**, and **15/15 temporary installed-artifact native scenarios** pass. These are different evidence groups, not all new product tests.
+- Existing human read-only inspection, startup/shutdown, same-ID reconnect and batching regressions remain in place. Assertions for intentionally changed approval/discovery/schema behavior now check the new contract rather than removing those journeys.
+
+| Deterministic fixture | Before | Revised |
+|---|---|---|
+| First-contact human prompts | requester 1 + receiver 1 | requester 1 + receiver 0 |
+| Discovery calls before send | empty known, then all: 2 | useful default: 1 |
+| Empty inspection | validation failure | compact overview |
+| Parallel independent first sends | second fails pending | each waits for its own decision |
+| Reply linkage | succeeds across turns/tools | preserved; reusable handle explicit |
+| Name race during approval | names not accepted | native destination stays pinned; same-name peer receives nothing |
+| Expanded single-message heading | twice | once |
+| Synthetic incoming model text | 419 UTF-16 code units | 194, same full payload and identifiers |
+
+Text sizes use JavaScript string `.length` on the old production template and the actual revised saved batch for the same synthetic request. They are not token counts or a general savings estimate. The normal scripted journey needs no ID relay, task resubmission or manual rerouting. UI decisions are scripted; these counts are not a human benchmark.
+
+**Remaining acceptance:** owner-observed C→A→B real-model trials and readability/accessibility review are pending approved model/session/resource bounds. Automated tests do not establish real-model tool choice or human acceptance. No paid trials, normal-session fixtures, normal installation changes, push, PR publication, merge or release are authorized by this local deliverable. GitHub issue bodies were read, not rewritten; this current contract and #9 identify the superseded choices.
+
+## Historical Base implementation and evaluation (2026-10-28)
+
 Date: 2026-10-28. Starting revision: `bbafcce4896f515204dd6da04a626c46f2bd358c`, PR #7 open/unmerged at source check. These are Base candidate changes for review, not a release or issue-completion claim. Historical spike reports are unchanged.
 
 ## Implemented

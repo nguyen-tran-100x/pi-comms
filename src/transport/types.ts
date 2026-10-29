@@ -1,5 +1,8 @@
 export const EXTENSION_BUS_FEATURE = "extension-bus-v1";
 export const EXACT_SEND_FEATURE = "exact-send-v1";
+export const CONTACT_APPROVAL_FEATURE = "owner-contact-v1";
+// Runtime-owned routing metadata, never part of the model's message envelope.
+export interface ContactApproval { context: string }
 /** Broker refused a register because another live process holds the session id. */
 export const SESSION_HELD_ERROR_CODE = "E_SESSION_HELD";
 
@@ -154,7 +157,7 @@ export type ClientMessage =
   | { type: "unregister" }
   | { type: "extension_capabilities_update"; extensions: ExtensionCapability[] }
   | { type: "list"; requestId: string }
-  | { type: "send"; to: string; message: Message; targetId?: string; targetEpoch?: string }
+  | { type: "send"; to: string; message: Message; targetId?: string; targetEpoch?: string; contactApproval?: ContactApproval }
   | { type: "message_receipt"; receipt: MessageReceipt }
   | { type: "cancel_message"; messageId: string }
   | { type: "cancel_ask"; messageId: string }
@@ -178,7 +181,7 @@ export type ClientMessage =
 export type BrokerMessage =
   | { type: "registered"; sessionId: string; features?: string[] }
   | { type: "sessions"; requestId: string; sessions: SessionInfo[] }
-  | { type: "message"; from: SessionInfo; message: Message }
+  | { type: "message"; from: SessionInfo; message: Message; contactApproval?: ContactApproval }
   | { type: "presence_update"; session: SessionInfo }
   | { type: "session_joined"; session: SessionInfo }
   | { type: "session_left"; sessionId: string }

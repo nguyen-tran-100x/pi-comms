@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { MessageInput, EnvelopeSchema, checkSize, validate, type Envelope, type InspectInput } from './schema.ts';
+import { Id, MessageInput, EnvelopeSchema, checkSize, validate, type Envelope, InspectInput } from './schema.ts';
 import type { Attempt } from './session-send.ts';
 
 export type Fact = { kind: 'accepted' | 'queued' | 'posted' | 'saved' | 'rejected'; at: string; source: string; evidenceRef?: string };
@@ -9,14 +9,18 @@ export type Entry = { message: Message; facts: Fact[]; state: Attempt['outcome']
 export type Approval = { id: string; name: string; context: string };
 export class Runtime {
   private approvals = new Map<string, Approval>();
+  private revoked = new Set<string>();
   private records = new Map<string, Entry>();
   private returns = new Map<string, Message>();
   waiting: string[] = [];
   paused = false;
   constructor(readonly self: string, private transport: (id: string, envelope: Envelope) => Promise<Attempt>) {}
   // Passed only to the human command handler, never registered as an agent tool.
-  approveFromOwner(peer: Approval) { this.approvals.set(peer.id, { ...peer }); }
-  revokeFromOwner(id: string) { this.approvals.delete(id); }
+  approveFromOwner(peer: Approval) { this.revoked.delete(peer.id); this.approvals.set(peer.id, { ...peer }); }
+  // Only transport metadata emitted by the human-approved runtime can reach this path.
+  approveFromTransport(peer: Approval) { if (!this.revoked.has(peer.id) && !this.isApproved(peer.id)) this.approvals.set(peer.id, { ...peer }); }
+  revokeFromOwner(id: string) { this.revoked.add(id); this.approvals.delete(id); }
+  approval(id: string) { const peer = this.approvals.get(id); return peer ? { ...peer } : undefined; }
   isApproved = (id: string) => this.approvals.has(id);
   known() { return [...this.approvals.values()].map(p => ({ ...p })); }
   entry(id: string) { return this.records.get(id); }
@@ -29,7 +33,8 @@ export class Runtime {
     checkSize(input);
     const source = 'respondTo' in input ? this.returns.get(input.respondTo) : undefined;
     if ('respondTo' in input && !source) throw new Error('CONTEXT_LOST');
-    const to = source?.from ?? ('to' in input ? input.to : '');
+    const to = source?.from ?? input.to;
+    validate(Id, to);
     const correction = input.corrects ? this.records.get(input.corrects)?.message : undefined;
     if (input.corrects && (!correction || correction.from !== this.self || correction.to !== to)) throw new Error('INVALID_INPUT: correction must reference your message to this exact peer');
     return { to, source };
@@ -38,7 +43,7 @@ export class Runtime {
     const { to, source } = this.contactFor(input);
     if (!this.isApproved(to)) throw new Error('CONTACT_NOT_APPROVED');
     const envelope: Envelope = { id: randomUUID(), exchange: source?.exchange ?? randomUUID(), subject: source?.subject ?? ('subject' in input ? input.subject : ''), text: input.text, refs: input.refs ?? [], replyTo: source?.id ?? null, corrects: input.corrects ?? null, createdAt: new Date().toISOString() };
-    checkSize(envelope);
+    checkSize(envelope, this.approval(to)?.context);
     const entry: Entry = { message: { ...envelope, from: this.self, to }, facts: [], state: 'unknown' };
     this.records.set(envelope.id, entry);
     let outcome: Attempt;
@@ -79,8 +84,9 @@ export class Runtime {
     this.waiting = this.waiting.filter(id => !posted.has(id));
     ids.forEach(id => this.fact(id, 'posted', 'native Pi sendMessage'));
   }
+  private visible(entry: Entry, audience: 'agent' | 'human') { return audience === 'human' || entry.message.from === this.self || this.isApproved(entry.message.from); }
   private project(entry: Entry, audience: 'agent' | 'human') {
-    if (audience === 'agent' && entry.message.from !== this.self && !this.isApproved(entry.message.from)) {
+    if (!this.visible(entry, audience)) {
       const { id, exchange, from, to } = entry.message;
       return { message: { id, exchange, from, to }, evidence: 'withheld', code: 'CONTACT_NOT_APPROVED' };
     }
@@ -103,12 +109,35 @@ export class Runtime {
     return { items, nextCursor: start + items.length < entries.length ? items.at(-1)!.message.id : null };
   }
   inspect(input: InspectInput, audience: 'agent' | 'human' = 'agent') {
-    if ('message' in input) {
+    validate(InspectInput, input);
+    if (input.message) {
       const entry = this.records.get(input.message);
       if (!entry) throw new Error('CONTEXT_LOST');
       return this.project(entry, audience);
     }
     const records = [...this.records.values()];
+    if (input.peer || !input.exchange && !input.queue && !input.outbox) {
+      const latest = new Map<string, Entry>();
+      for (const entry of records) {
+        if (!input.peer || entry.message.from === input.peer || entry.message.to === input.peer) {
+          latest.delete(entry.message.exchange); latest.set(entry.message.exchange, entry);
+        }
+      }
+      const exchanges = [...latest.values()].reverse().map(entry => {
+        const visible = this.visible(entry, audience);
+        return { exchange: entry.message.exchange, peer: entry.message.from === this.self ? entry.message.to : entry.message.from,
+          ...(visible ? { subject: entry.message.subject, preview: entry.message.text.slice(0, 240), at: entry.message.createdAt } : { code: 'CONTACT_NOT_APPROVED' }),
+          state: entry.state, latestMessage: entry.message.id };
+      });
+      if (input.peer) {
+        const start = input.cursor ? exchanges.findIndex(e => e.exchange === input.cursor) + 1 : 0;
+        if (input.cursor && !start) throw new Error('CONTEXT_LOST');
+        const items = exchanges.slice(start, start + 30);
+        return { items, nextCursor: start + items.length < exchanges.length ? items.at(-1)!.exchange : null };
+      }
+      return { waiting: this.waiting.length, paused: this.paused, recentExchanges: exchanges.slice(0, 8),
+        uncertainOutgoing: records.filter(e => e.message.from === this.self && e.state === 'unknown').slice(-8).map(e => ({ message: e.message.id, to: e.message.to, code: e.code ?? 'OUTCOME_UNKNOWN' })) };
+    }
     const selected = 'queue' in input ? this.waiting.map(id => this.records.get(id)!) : 'outbox' in input ? records.filter(e => e.message.from === this.self) : records.filter(e => e.message.exchange === input.exchange);
     if ('exchange' in input && !selected.length) throw new Error('CONTEXT_LOST');
     return this.page(selected, input.cursor, audience);

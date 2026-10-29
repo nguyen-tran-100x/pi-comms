@@ -10,7 +10,7 @@ export function approvalPrompt(id: string, colleague: string, work: string, text
   const preview = text.replace(/\s+/g, ' ');
   return {
     title: direction === 'send' ? `Work with ${colleague}?` : `${colleague} wants to work with you`,
-    message: `Work: ${work}\n\n${direction === 'send' ? 'Yes: send this request now.' : 'Yes: admit held messages when reception is ready.'}\n${direction === 'send' ? 'No/Esc: send nothing.' : 'No/Esc: keep messages held for you, not the agent.'}\nAllows requests, clarifications and replies for this work.\nYour directions and tool permissions still apply.\n\n${direction === 'receive' ? 'Incoming preview (not yet shared with the agent)' : 'Request preview'}: ${preview.slice(0, 160)}${preview.length > 160 ? '…' : ''}\nSession: ${id}\nApproval lasts until reload/restart.`,
+    message: `Work: ${work}\n\n${direction === 'send' ? 'Yes: send this request now.' : 'Yes: admit held messages when reception is ready.'}\n${direction === 'send' ? 'No/Esc: send nothing.' : 'No/Esc: keep messages held for you, not the agent.'}\nAllows requests, clarifications and replies for this work.\n${direction === 'send' ? 'The receiver accepts this contact without another prompt; its Pause/revoke still apply.' : 'Only your explicit approval restores a refused or revoked contact.'}\nYour directions and tool permissions still apply.\n\n${direction === 'receive' ? 'Incoming preview (not yet shared with the agent)' : 'Request preview'}: ${preview.slice(0, 160)}${preview.length > 160 ? '…' : ''}\nSession: ${id}\nApproval lasts until reload/restart.`,
   };
 }
 
@@ -33,7 +33,7 @@ export function inspectionText(data: Inspection, labels: Labels, technical = fal
       lines.push('', 'Technical evidence', `Message: ${m.id}`, `Exchange: ${m.exchange}`, `From session: ${m.from}`, `To session: ${m.to}`, `Created: ${m.createdAt}`, `Send/receive state: ${entry.state}`, `Evidence: ${entry.evidence}`);
       if (m.replyTo) lines.push(`Reply to: ${m.replyTo}`);
       if (m.corrects) lines.push(`Corrects: ${m.corrects}`);
-      if (entry.returnHandle) lines.push(`Return handle: ${entry.returnHandle}`);
+      if (entry.returnHandle) lines.push(`Return handle: ${entry.returnHandle} (reusable across replies and turns)`);
       if (entry.code) lines.push(`Code: ${entry.code}`);
       lines.push(...entry.facts.map(fact => `${fact.kind} · ${fact.at} · ${fact.source}${fact.evidenceRef ? ` · evidence ${fact.evidenceRef}` : ''}`));
       if (entry.responses.length) lines.push(`Linked responses: ${entry.responses.join(', ')}`);

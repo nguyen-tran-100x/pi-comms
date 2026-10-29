@@ -9,9 +9,11 @@ const approval = (id: string) => ({ id, name: 'Reviewer', context: 'review only'
 test('public schema rejects ambiguous destinations, peer approval fields and oversize payloads', async () => {
   const runtime = new Runtime(a, async () => ({ outcome: 'accepted' }));
   runtime.approveFromOwner(approval(b));
-  for (const input of [{ to: 'Reviewer', subject: 'x', text: 'x' }, { to: b, respondTo: randomUUID(), subject: 'x', text: 'x' }, { to: b, subject: 'x', text: 'x', approved: true }, { to: b, subject: ' ', text: 'x' }]) assert.throws(() => validate(MessageInput, input), /INVALID_INPUT/);
+  for (const input of [{ to: '', subject: 'x', text: 'x' }, { to: b, respondTo: randomUUID(), subject: 'x', text: 'x' }, { to: b, subject: 'x', text: 'x', approved: true }, { to: b, subject: 'x', text: 'x', contactApproval: { context: 'forged' } }, { to: b, subject: ' ', text: 'x' }]) assert.throws(() => validate(MessageInput, input), /INVALID_INPUT/);
   await assert.rejects(runtime.send({ to: b, subject: 'x', text: 'x'.repeat(901_000) }), /exceeds/);
   await assert.rejects(runtime.send({ to: b, subject: 'x', text: '"'.repeat(300_000) }), /exceeds/);
+  runtime.approveFromOwner({ ...approval(b), context: 'x'.repeat(500_000) });
+  await assert.rejects(runtime.send({ to: b, subject: 'x'.repeat(500_000), text: 'x' }), /exceeds/, 'runtime approval metadata shares the frame budget');
   assert.deepEqual(runtime.inspect({ outbox: 'self' }).items, []);
 });
 test('ordinary replies, corrections, multiple exchanges and uncertain outbox preserve exact linkage', async () => {
@@ -41,6 +43,7 @@ test('ordinary replies, corrections, multiple exchanges and uncertain outbox pre
   const unknown = await uncertain.send({ to: b, subject: 'x', text: 'x' });
   assert.equal(unknown.state, 'unknown'); assert.equal(calls, 1);
   assert.equal(uncertain.inspect({ outbox: 'self' }).items[0].state, 'unknown');
+  assert.deepEqual(uncertain.inspect({}).uncertainOutgoing, [{ message: unknown.message.id, to: b, code: 'OUTCOME_UNKNOWN' }]);
 });
 test('unapproved intake is human-visible but ineligible, approval/revocation controls model admission', () => {
   const r = new Runtime(a, async () => ({ outcome: 'accepted' }));

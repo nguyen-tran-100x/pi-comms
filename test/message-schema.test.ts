@@ -53,7 +53,7 @@ test('OpenAI completions outbound payload preserves optional fields without netw
 test('routing failures provide minimal recovery and optional correction IDs stay optional', () => {
   for (const input of [send, reply, { ...reply, corrects: reply.respondTo }]) validate(MessageInput, input);
   for (const routing of [{ to: send.to }, { subject: send.subject }, send]) {
-    assert.throws(() => validate(MessageInput, { ...reply, ...routing }), /Retry with \{ respondTo, text \}; omit to and subject.*No message was sent for this input/);
+    assert.throws(() => validate(MessageInput, { ...reply, ...routing }), /For a new message use \{ to, subject, text \}; omit respondTo\. For a reply use \{ respondTo, text \} with a real incoming return handle; omit to and subject.*No message was sent for this input/);
   }
   for (const input of [{ text: 'Findings' }, { to: send.to, text: 'Findings' }, { subject: send.subject, text: 'Findings' }]) {
     assert.throws(() => validate(MessageInput, input), /new-message routing requires to and subject/);

@@ -17,7 +17,8 @@ try {
   execFileSync('npm', ['install', '--ignore-scripts', '--omit=dev', '--legacy-peer-deps', '--no-audit', '--no-fund', join(root, pack.filename)], { cwd: prefix, stdio: 'inherit' });
   const installed = join(prefix, 'node_modules/pi-comms');
   const manifest = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf8'));
-  assert.equal(manifest.version, '0.1.0'); assert.deepEqual(manifest.pi.extensions, ['./dist/extension.js']);
+  const sourceManifest = JSON.parse(readFileSync('package.json', 'utf8'));
+  assert.equal(manifest.version, sourceManifest.version); assert.deepEqual(manifest.pi.extensions, ['./dist/extension.js']);
   assert.equal(manifest.dependencies, undefined, 'no runtime dependencies bundled; host supplies Pi/typebox/TUI');
   // Load through the real Pi resource loader, which supplies host module mappings.
   const sdk = pathToFileURL(resolve('node_modules/@earendil-works/pi-coding-agent/dist/index.js')).href;

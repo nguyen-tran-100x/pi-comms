@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.1] - 2026-10-30
+
+- Clarify routing validation errors with explicit new-message and reply forms, without inferring intent from conflicting fields or encouraging fabricated IDs.
+- Document recovery from provider schemas that incorrectly require optional routing fields.
+- Add offline regression coverage for serialized schemas and Google/OpenAI provider conversions.
+
 ## [0.1.0] - 2026-10-29
 
 Initial public release.

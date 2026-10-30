@@ -24,7 +24,7 @@ const recovery: Record<string, string> = {
   IDENTITY_CONFLICT: 'Close the other live process claiming this saved session, then reload.',
   OUTCOME_UNKNOWN: 'Inspect the prior message/outbox. Do not blindly resend; verify through the approved colleague if needed.',
   TARGET_UNAVAILABLE: 'The exact session is unavailable. Resume it or try again later; do not substitute a similar name.',
-  INVALID_INPUT: 'Use the declared fields and exact IDs. Oversize content must be a work-product reference.',
+  INVALID_INPUT: 'Follow the specific validation message above. Supply only fields needed for this operation; never fabricate IDs to fill optional fields.',
 };
 
 export default function comms(pi: ExtensionAPI) {

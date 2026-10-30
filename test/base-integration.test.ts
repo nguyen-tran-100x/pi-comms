@@ -419,7 +419,8 @@ test('installed Base model tools: private inspection boundary and discover → s
         const failed = b!.events.find(e => e.type === 'tool_execution_end' && e.toolName === 'comms_message' && e.isError);
         assert.ok(failed, 'runtime mutual exclusion rejects invalid reply before sending');
         assert.match(text([failed.result]), /INVALID_INPUT/);
-        assert.match(text(context.messages), /supply to and subject OR respondTo/);
+        assert.match(text(context.messages), /Retry with \{ respondTo, text \}; omit to and subject/);
+        assert.match(text(context.messages), /No message was sent for this input/);
         const renderer = b!.runtime.session.extensionRunner!.getToolDefinition('comms_message')!.renderResult!;
         const rendered = renderer(failed.result, { expanded: false, isPartial: false }, { fg: (_key: string, value: string) => value } as any, {} as any).render(100).join('\n');
         assert.match(rendered, /INVALID_INPUT/); assert.match(rendered, /subject/);

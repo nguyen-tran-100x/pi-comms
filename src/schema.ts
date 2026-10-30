@@ -40,7 +40,8 @@ export function validate(schema: TSchema, value: unknown) {
   if (!Check<TSchema, unknown>(schema, value)) throw new Error('INVALID_INPUT');
   if (schema === MessageInput) {
     const input = value as MessageInput;
-    if (input.respondTo ? input.to !== undefined || input.subject !== undefined : !input.to || !input.subject) throw new Error('INVALID_INPUT: supply to and subject OR respondTo');
+    if (input.respondTo && (input.to !== undefined || input.subject !== undefined)) throw new Error('INVALID_INPUT: reply routing was combined with new-message routing. Retry with { respondTo, text }; omit to and subject. refs and corrects are optional; use corrects only for a real earlier message ID. No message was sent for this input.');
+    if (!input.respondTo && (!input.to || !input.subject)) throw new Error('INVALID_INPUT: new-message routing requires to and subject. Retry with { to, subject, text }, or reply with { respondTo, text }. refs and corrects are optional; never fabricate IDs. No message was sent for this input.');
   }
   if (schema === AskInput) for (const request of (value as AskInput).requests) validate(MessageInput, request);
   if (schema === InspectInput) {

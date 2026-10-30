@@ -93,6 +93,8 @@ Direct native ask replies stay claimed until model-context admission: they are n
 
 ### Recovery
 
+For a routing validation error, retry with exactly `{to, subject, text}` for a new message or `{respondTo, text}` for a reply. `refs` and `corrects` are optional; never invent a correction ID to satisfy a tool declaration. Routing validation rejects before sending. If a provider presents every routing field as required, that declaration conflicts with pi-comms: the serialized message schema requires only `text`, and runtime validation enforces the routing combination. Compare the loaded extension schema and the provider's outbound payload before changing the tool interface. Tests cover serialized schemas, Google and OpenAI Responses conversion, and the OpenAI Completions outbound payload without network access; downstream gateway rewriting is not covered.
+
 Same-ID reconnect refresh is internal: after a definite stale-epoch rejection, re-resolve only that same native ID once and recheck approval. Unknown send outcome never automatically retries. Concurrent active claims are rejected explicitly. A fork/new session has a different identity. Renaming a session updates discovery and contact labels without changing its native ID or approval binding; clearing its name restores the UUID display fallback.
 
 ## Facts and volatile state
